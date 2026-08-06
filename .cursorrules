@@ -1,0 +1,29 @@
+# gstack Embedded Rules
+
+## Logging
+- Use ESP_LOGI / ESP_LOGW / ESP_LOGE with a static const char* TAG.
+- Never use printf for runtime output.
+
+## Error handling
+- Wrap all ESP-IDF SDK calls with ESP_ERROR_CHECK() unless the error is
+  explicitly handled (log + propagate esp_err_t, or documented fallback).
+
+## RTOS synchronisation
+- Prefer FreeRTOS Task Notifications (xTaskNotify / ulTaskNotifyTake) over
+  binary semaphores for single-consumer event signalling — lower overhead,
+  no dynamic allocation.
+- Use semaphores / mutexes only when multiple producers or shared resources
+  require it; document the reason in a comment.
+
+## Architecture
+- Every hardware peripheral or logical subsystem lives in components/<name>/.
+- Each component exposes a public API only through include/<name>.h.
+- main/ depends on components via REQUIRES / PRIV_REQUIRES in CMakeLists.txt.
+- Never reach into another component's .c files directly.
+- One FreeRTOS task owns the I2C bus; never call I2C from an ISR or BLE callback.
+
+## High-velocity delivery
+- When implementing any new feature, supply all three:
+    1. Header:  include/<name>.h   — public API + Doxygen comments
+    2. Implementation: <name>.c    — gstack error + logging patterns
+    3. Usage:   main.c snippet     — minimal call site example

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>C3-Tracker Web BLE</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>C3-Tracker</h1>
+    <p class="sub">Live IMU + mag over Web Bluetooth</p>
+  </header>
+
+  <section class="controls">
+    <button id="btnConnect" type="button">Connect</button>
+    <button id="btnDisconnect" type="button" disabled>Disconnect</button>
+    <span id="status" class="status">Disconnected</span>
+  </section>
+
+  <section class="stats">
+    <div>Rate: <strong id="rate">—</strong> Hz</div>
+    <div>Seq gaps: <strong id="gaps">0</strong></div>
+    <div>Meta: <strong id="meta">—</strong></div>
+  </section>
+
+  <section class="leds">
+    <span>LEDs:</span>
+    <button type="button" data-led="0" disabled>Off</button>
+    <button type="button" data-led="1" disabled>Green</button>
+    <button type="button" data-led="2" disabled>Blue</button>
+    <button type="button" data-led="3" disabled>Both</button>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab active" data-tab="plots" role="tab" aria-selected="true">Plots</button>
+    <button type="button" class="tab" data-tab="orientation" role="tab" aria-selected="false">Orientation</button>
+    <button type="button" class="tab" data-tab="logging" role="tab" aria-selected="false">CSV log</button>
+  </nav>
+
+  <section id="panel-plots" class="tab-panel active" role="tabpanel">
+    <section class="toggles" id="toggles"></section>
+    <section class="plots">
+      <figure>
+        <figcaption>Accelerometer — fixed ±2 g (device FS ±8 g)</figcaption>
+        <canvas id="plotAccel" width="900" height="200"></canvas>
+      </figure>
+      <figure>
+        <figcaption>Gyroscope — fixed ±250 dps (device FS ±512 dps)</figcaption>
+        <canvas id="plotGyro" width="900" height="200"></canvas>
+      </figure>
+      <figure>
+        <figcaption>Magnetometer (G) — auto scale</figcaption>
+        <canvas id="plotMag" width="900" height="200"></canvas>
+      </figure>
+    </section>
+  </section>
+
+  <section id="panel-orientation" class="tab-panel" role="tabpanel" hidden>
+    <p class="hint">
+      Cube attitude from accel (tilt) + mag (tilt-compensated yaw), with light angle smoothing.
+      Orthographic projection (true cube proportions). RGB faces = +X / +Y / +Z. No gyro fusion yet.
+    </p>
+    <figure class="cube-wrap">
+      <figcaption>Device orientation</figcaption>
+      <canvas id="plotCube" width="640" height="420"></canvas>
+    </figure>
+  </section>
+
+  <section id="panel-logging" class="tab-panel" role="tabpanel" hidden>
+    <p class="hint">
+      Records engineering + raw values while connected. Start → move the board → Stop → Download CSV.
+    </p>
+    <section class="log-controls">
+      <button id="btnLogStart" type="button" disabled>Start</button>
+      <button id="btnLogStop" type="button" disabled>Stop</button>
+      <button id="btnLogDownload" type="button" disabled>Download CSV</button>
+      <button id="btnLogClear" type="button" disabled>Clear</button>
+      <span class="status">Rows: <strong id="logRows">0</strong> · <strong id="logState">idle</strong></span>
+    </section>
+  </section>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

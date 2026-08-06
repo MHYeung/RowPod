@@ -1,0 +1,93 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a2332;
+  --text: #e7ecf3;
+  --muted: #8b9bb4;
+  --accent: #3d9cf0;
+  --green: #3dd68c;
+  --blue: #5b8def;
+  --danger: #f07178;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 1.25rem;
+}
+header h1 { margin: 0; font-size: 1.4rem; }
+.sub { margin: 0.25rem 0 1rem; color: var(--muted); }
+.controls, .stats, .leds, .toggles, .log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid #2c3a4f;
+  border-radius: 8px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.status { color: var(--muted); }
+.status.ok { color: var(--green); }
+.status.err { color: var(--danger); }
+.stats { color: var(--muted); font-size: 0.95rem; }
+.stats strong { color: var(--text); }
+
+.tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin: 1rem 0 1rem;
+  border-bottom: 1px solid #2c3a4f;
+  padding-bottom: 0.5rem;
+}
+.tab {
+  border-radius: 8px 8px 0 0;
+  border-bottom: none;
+}
+.tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tab-panel[hidden] { display: none; }
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: 52rem;
+  margin: 0 0 1rem;
+}
+
+.plots figure, .cube-wrap {
+  margin: 0 0 1rem;
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+figcaption { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+canvas {
+  width: 100%;
+  max-width: 900px;
+  height: auto;
+  display: block;
+  background: #101820;
+  border-radius: 6px;
+}
+#plotCube {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.toggles label {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}

@@ -1,0 +1,8 @@
+# Use the ESP32-C3's native USB Serial/JTAG controller for console I/O.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Stage 6 — NimBLE advertise-only RF bring-up
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+CONFIG_BT_BLE_ENABLED=y
