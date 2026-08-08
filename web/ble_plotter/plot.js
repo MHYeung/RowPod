@@ -7,49 +7,89 @@ const PAD_B = 8;
 export class MultiPlot {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {string[]} keys
-   * @param {Record<string,string>} colors
-   * @param {{fixedMin?: number, fixedMax?: number, unit?: string, tickCount?: number}} [opts]
+   * @param {string[]} channelKeys base channel keys (ax, ay, ...)
+   * @param {{unit?: string, tickCount?: number}} [opts]
    */
-  constructor(canvas, keys, colors, opts = {}) {
+  constructor(canvas, channelKeys, opts = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-    this.keys = keys;
-    this.colors = colors;
-    this.fixedMin = opts.fixedMin;
-    this.fixedMax = opts.fixedMax;
+    this.channelKeys = channelKeys;
     this.unit = opts.unit || "";
     this.tickCount = opts.tickCount ?? 5;
-    this.enabled = Object.fromEntries(keys.map((k) => [k, true]));
-    this.buffers = Object.fromEntries(keys.map((k) => [k, new Float32Array(CAPACITY)]));
-    this.write = 0;
-    this.count = 0;
+    /** @type {Map<string,{color:string,enabled:boolean,buffers:Record<string,Float32Array>,write:number,count:number}>} */
+    this.series = new Map();
+    this.channelEnabled = Object.fromEntries(channelKeys.map((k) => [k, true]));
   }
 
-  setEnabled(key, on) {
-    if (key in this.enabled) this.enabled[key] = on;
-  }
-
-  push(sample) {
-    for (const k of this.keys) {
-      this.buffers[k][this.write] = sample[k] ?? 0;
+  ensureSeries(id, color) {
+    if (this.series.has(id)) {
+      const s = this.series.get(id);
+      s.color = color;
+      return;
     }
-    this.write = (this.write + 1) % CAPACITY;
-    this.count = Math.min(this.count + 1, CAPACITY);
+    this.series.set(id, {
+      color,
+      enabled: true,
+      buffers: Object.fromEntries(
+        this.channelKeys.map((k) => [k, new Float32Array(CAPACITY)])
+      ),
+      write: 0,
+      count: 0,
+    });
+  }
+
+  removeSeries(id) {
+    this.series.delete(id);
+  }
+
+  setSeriesEnabled(id, on) {
+    const s = this.series.get(id);
+    if (s) s.enabled = on;
+  }
+
+  setChannelEnabled(key, on) {
+    if (key in this.channelEnabled) this.channelEnabled[key] = on;
+  }
+
+  /** @deprecated single-pod API */
+  setEnabled(key, on) {
+    this.setChannelEnabled(key, on);
+  }
+
+  /**
+   * @param {string} id series/pod id
+   * @param {Record<string,number>} sample engineering units for channelKeys
+   */
+  pushSeries(id, sample) {
+    const s = this.series.get(id);
+    if (!s) return;
+    for (const k of this.channelKeys) {
+      s.buffers[k][s.write] = sample[k] ?? 0;
+    }
+    s.write = (s.write + 1) % CAPACITY;
+    s.count = Math.min(s.count + 1, CAPACITY);
+  }
+
+  /** @deprecated single-pod API — uses first series or creates "default" */
+  push(sample) {
+    if (!this.series.has("default")) {
+      this.ensureSeries("default", "#3d9cf0");
+    }
+    this.pushSeries("default", sample);
   }
 
   _range() {
-    if (Number.isFinite(this.fixedMin) && Number.isFinite(this.fixedMax)) {
-      return { min: this.fixedMin, max: this.fixedMax };
-    }
     let min = Infinity;
     let max = -Infinity;
-    for (const k of this.keys) {
-      if (!this.enabled[k]) continue;
-      for (let i = 0; i < this.count; i++) {
-        const v = this.buffers[k][i];
-        if (v < min) min = v;
-        if (v > max) max = v;
+    for (const s of this.series.values()) {
+      if (!s.enabled) continue;
+      for (const k of this.channelKeys) {
+        if (!this.channelEnabled[k]) continue;
+        for (let i = 0; i < s.count; i++) {
+          const v = s.buffers[k][i];
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
       }
     }
     if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
@@ -71,7 +111,6 @@ export class MultiPlot {
     const { min, max } = this._range();
     const span = max - min || 1;
 
-    /* Grid + Y labels */
     ctx.font = "11px Segoe UI, system-ui, sans-serif";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
@@ -90,7 +129,6 @@ export class MultiPlot {
       ctx.fillText(label, PAD_L - 6, y);
     }
 
-    /* Zero line when in range */
     if (min < 0 && max > 0) {
       const y0 = PAD_T + ((max - 0) / span) * plotH;
       ctx.strokeStyle = "#3a4a63";
@@ -100,21 +138,25 @@ export class MultiPlot {
       ctx.stroke();
     }
 
-    /* Traces */
-    for (const k of this.keys) {
-      if (!this.enabled[k] || this.count < 2) continue;
-      ctx.strokeStyle = this.colors[k];
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (let i = 0; i < this.count; i++) {
-        const idx = (this.write - this.count + i + CAPACITY) % CAPACITY;
-        const x = PAD_L + (i / (CAPACITY - 1)) * plotW;
-        const y = PAD_T + ((max - this.buffers[k][idx]) / span) * plotH;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+    for (const s of this.series.values()) {
+      if (!s.enabled || s.count < 2) continue;
+      for (const k of this.channelKeys) {
+        if (!this.channelEnabled[k]) continue;
+        ctx.strokeStyle = s.color;
+        ctx.globalAlpha = 0.85;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (let i = 0; i < s.count; i++) {
+          const idx = (s.write - s.count + i + CAPACITY) % CAPACITY;
+          const x = PAD_L + (i / (CAPACITY - 1)) * plotW;
+          const y = PAD_T + ((max - s.buffers[k][idx]) / span) * plotH;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
     }
+    ctx.globalAlpha = 1;
 
     if (this.unit) {
       ctx.fillStyle = "#8b9bb4";

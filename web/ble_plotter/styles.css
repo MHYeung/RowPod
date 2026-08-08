@@ -19,12 +19,58 @@ body {
 }
 header h1 { margin: 0; font-size: 1.4rem; }
 .sub { margin: 0.25rem 0 1rem; color: var(--muted); }
-.controls, .stats, .leds, .toggles, .log-controls {
+.controls, .stats, .toggles, .log-controls, .pods {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
   margin-bottom: 1rem;
+}
+.pods {
+  align-items: stretch;
+}
+.pod-card {
+  background: var(--panel);
+  border: 1px solid #2c3a4f;
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 0.75rem;
+  min-width: 280px;
+  flex: 1 1 320px;
+}
+.pod-card.selected {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.pod-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+.pod-title .muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.pod-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.pod-actions input[type="text"] {
+  background: #101820;
+  color: var(--text);
+  border: 1px solid #2c3a4f;
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  min-width: 10rem;
 }
 button {
   background: var(--panel);

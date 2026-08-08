@@ -5,6 +5,7 @@ idf_component_register(
         nvs_flash
         esp_event
         board
+        device_config
         ui
         battery
         power

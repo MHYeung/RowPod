@@ -14,10 +14,26 @@ extern "C" {
 #define SENSOR_PROTO_DATA_UUID_STR  "9b7e1001-2b2f-4f71-9b86-4bb2e6d54f00"
 #define SENSOR_PROTO_META_UUID_STR  "9b7e1002-2b2f-4f71-9b86-4bb2e6d54f00"
 
+/** Pod configuration / software-sync service (fixed protocol UUIDs). */
+#define SENSOR_PROTO_CFG_SVC_UUID_STR   "9b7e2000-2b2f-4f71-9b86-4bb2e6d54f00"
+#define SENSOR_PROTO_CFG_INFO_UUID_STR  "9b7e2001-2b2f-4f71-9b86-4bb2e6d54f00"
+#define SENSOR_PROTO_CFG_NAME_UUID_STR  "9b7e2002-2b2f-4f71-9b86-4bb2e6d54f00"
+#define SENSOR_PROTO_CFG_SYNC_UUID_STR  "9b7e2003-2b2f-4f71-9b86-4bb2e6d54f00"
+#define SENSOR_PROTO_CFG_BATT_UUID_STR  "9b7e2004-2b2f-4f71-9b86-4bb2e6d54f00"
+
 #define SENSOR_PROTO_FRAME_LEN      20
 #define SENSOR_PROTO_META_LEN       12
+#define SENSOR_PROTO_CFG_INFO_LEN   4
+#define SENSOR_PROTO_CFG_BATT_LEN   4
+#define SENSOR_PROTO_CFG_SYNC_REQ_LEN  8
+#define SENSOR_PROTO_CFG_SYNC_RSP_LEN  20
+/** batt.flags bit0: reading valid */
+#define SENSOR_PROTO_BATT_FLAG_VALID  0x01
 #define SENSOR_PROTO_FORMAT_VER     1
 #define SENSOR_PROTO_RATE_HZ        100
+
+/** meta.flags bit0: multi-pod mode active on device. */
+#define SENSOR_PROTO_FLAG_MULTI     0x0001
 
 /**
  * @brief Live sample frame (packed little-endian on the wire).

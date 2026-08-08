@@ -4,32 +4,27 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>C3-Tracker Web BLE</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=6" />
 </head>
 <body>
   <header>
     <h1>C3-Tracker</h1>
-    <p class="sub">Live IMU + mag over Web Bluetooth</p>
+    <p class="sub">Single-pod logging and multi-pod overlay motion network · dashboard v6</p>
   </header>
 
   <section class="controls">
-    <button id="btnConnect" type="button">Connect</button>
-    <button id="btnDisconnect" type="button" disabled>Disconnect</button>
-    <span id="status" class="status">Disconnected</span>
+    <button id="btnAddPod" type="button">Add pod</button>
+    <button id="btnDisconnect" type="button" disabled>Disconnect all</button>
+    <span id="status" class="status">No pods connected</span>
   </section>
+
+  <section class="pods" id="podList" aria-label="Connected pods"></section>
 
   <section class="stats">
-    <div>Rate: <strong id="rate">—</strong> Hz</div>
-    <div>Seq gaps: <strong id="gaps">0</strong></div>
+    <div>Pods: <strong id="podCount">0</strong></div>
+    <div>Selected rate: <strong id="rate">—</strong> Hz</div>
+    <div>Selected gaps: <strong id="gaps">0</strong></div>
     <div>Meta: <strong id="meta">—</strong></div>
-  </section>
-
-  <section class="leds">
-    <span>LEDs:</span>
-    <button type="button" data-led="0" disabled>Off</button>
-    <button type="button" data-led="1" disabled>Green</button>
-    <button type="button" data-led="2" disabled>Blue</button>
-    <button type="button" data-led="3" disabled>Both</button>
   </section>
 
   <nav class="tabs" role="tablist">
@@ -39,18 +34,22 @@
   </nav>
 
   <section id="panel-plots" class="tab-panel active" role="tabpanel">
+    <p class="hint">
+      Overlay compares the same channels across pods. Each pod color marks its traces.
+      Software sync estimates clock offset for CSV timestamps; it is not sample-level IMU sync.
+    </p>
     <section class="toggles" id="toggles"></section>
     <section class="plots">
       <figure>
-        <figcaption>Accelerometer — fixed ±2 g (device FS ±8 g)</figcaption>
+        <figcaption>Accelerometer — auto scale overlay</figcaption>
         <canvas id="plotAccel" width="900" height="200"></canvas>
       </figure>
       <figure>
-        <figcaption>Gyroscope — fixed ±250 dps (device FS ±512 dps)</figcaption>
+        <figcaption>Gyroscope — auto scale overlay</figcaption>
         <canvas id="plotGyro" width="900" height="200"></canvas>
       </figure>
       <figure>
-        <figcaption>Magnetometer (G) — auto scale</figcaption>
+        <figcaption>Magnetometer (G) — auto scale overlay</figcaption>
         <canvas id="plotMag" width="900" height="200"></canvas>
       </figure>
     </section>
@@ -58,18 +57,18 @@
 
   <section id="panel-orientation" class="tab-panel" role="tabpanel" hidden>
     <p class="hint">
-      Cube attitude from accel (tilt) + mag (tilt-compensated yaw), with light angle smoothing.
-      Orthographic projection (true cube proportions). RGB faces = +X / +Y / +Z. No gyro fusion yet.
+      Cube attitude from the selected pod: accel (tilt) + mag (tilt-compensated yaw).
+      Orthographic projection. RGB faces = +X / +Y / +Z. No gyro fusion yet.
     </p>
     <figure class="cube-wrap">
-      <figcaption>Device orientation</figcaption>
+      <figcaption>Selected pod orientation</figcaption>
       <canvas id="plotCube" width="640" height="420"></canvas>
     </figure>
   </section>
 
   <section id="panel-logging" class="tab-panel" role="tabpanel" hidden>
     <p class="hint">
-      Records engineering + raw values while connected. Start → move the board → Stop → Download CSV.
+      Records engineering + raw values for all connected pods. Includes position, device id, and synced_ms.
     </p>
     <section class="log-controls">
       <button id="btnLogStart" type="button" disabled>Start</button>
@@ -80,6 +79,6 @@
     </section>
   </section>
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=6"></script>
 </body>
 </html>

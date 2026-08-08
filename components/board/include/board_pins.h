@@ -11,6 +11,9 @@
 #define BOARD_LED_BLUE_GPIO         7
 #define BOARD_BUTTON_GPIO           10
 #define BOARD_BATTERY_ADC_GPIO      2
+/** Pack voltage = ADC pin voltage × ratio. 1:1 divider → 2. */
+#define BOARD_BATTERY_DIVIDER_RATIO 2
+
 #define BOARD_I2C_SDA_GPIO          4
 #define BOARD_I2C_SCL_GPIO          5
 #define BOARD_IMU_INT1_GPIO         8

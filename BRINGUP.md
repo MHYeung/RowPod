@@ -23,13 +23,37 @@ debugging hardware; the production app wires UI + sensors + BLE together.
 
 QMI8658A @ `0x6A` (WHO_AM_I `0x05`), QMC5883P @ `0x2C` (CHIPID `0x80`).
 
+## Status LEDs
+
+| State | Green | Blue |
+|-------|-------|------|
+| Advertising / waiting | Off | LEDC breathing, 2 s period |
+| Connected | 25% PWM | Off |
+| Streaming notifications | 25% PWM | 25% PWM |
+| Mode-change ack | brief dual flash | brief dual flash |
+| Light sleep | Off | Off |
+
 ## Application flow (current)
 
-1. `ui_init` — LEDs + button GPIOs
-2. `sensor_stream_init` — I²C bus, IMU/mag init, paused 100 Hz task
-3. `ble_tracker_init` — NimBLE advertise as `C3-Tracker`
-4. Client enables notifications on motion data characteristic → streaming starts
-5. Nordic LBS LED write `00`–`03` controls LEDs over BLE
+1. `device_config_init` — load mode / name / pod id from NVS
+2. `ui_init` — LEDs + long-press gesture task
+3. `sensor_stream_init` — I²C bus, IMU/mag init, paused 100 Hz task
+4. `ble_tracker_init` — NimBLE advertise motion + config services
+5. Client enables notifications on motion data → streaming starts
+6. Dashboard may write position name / request software sync
+7. Long-press (~2 s) while advertising toggles Single/Multi and refreshes ADV
+8. No connection for three minutes → BLE stops and light sleep waits for GPIO10
+9. Wake press is wake-only; gestures re-arm after advertising resumes
+
+## Multi-pod validation checklist
+
+1. Boot one pod; confirm blue breath and advertised name.
+2. Long-press while advertising; confirm dual LED flash and mode log / name change.
+3. Power-cycle; confirm mode/name persist from NVS.
+4. Enter light sleep; wake with button; confirm wake hold does **not** toggle mode.
+5. Web: Add pod → enable notify → rename → reconnect and verify new ADV name.
+6. Two pods: overlay traces, per-pod rates/gaps, CSV includes `position`/`synced_ms`.
+7. Optional four-pod stress: watch for rising seq gaps / UI lag.
 
 ## Web plotter
 
@@ -38,7 +62,7 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080` in Chrome/Edge (not `file://`).
+Open `http://localhost:8080/?v=5` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead.
 
 ## Known hardware notes
 
@@ -48,6 +72,7 @@ Open `http://localhost:8080` in Chrome/Edge (not `file://`).
 
 ## Documentation checkpoints
 
-- ESP-IDF I2C master + NimBLE GATT notify
+- ESP-IDF I2C master + NimBLE GATT notify / NVS / light-sleep GPIO wake
 - QMI8658A / QMC5883P datasheets (identity, output registers, scales)
 - Chrome Web Bluetooth secure context (`localhost` or HTTPS)
+- Software sync accuracy is visual/ms-scale only

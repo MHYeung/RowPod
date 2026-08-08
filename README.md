@@ -26,7 +26,19 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080`, click **Connect**, select **C3-Tracker**.
+Open `http://localhost:8080/?v=5`, click **Add pod**, select a tracker.
+
+## Single / multi-pod modes
+
+- Long-press GPIO10 for ~2 s while advertising toggles Single ↔ Multi.
+- Single default name: `C3-Tracker`.
+- Multi default name: `C3-T-XXXX` (stable pod id from NVS/MAC).
+- Dashboard rename writes the position name into the pod NVS and becomes the
+  BLE advertised name (max 20 chars). Motion service UUIDs stay fixed.
+- Software clock sync estimates millisecond-scale offsets for overlay/CSV; it
+  is not sample-level IMU phase lock.
+- Target 2–4 simultaneous Web Bluetooth pods; each first connect needs a
+  browser gesture.
 
 ## Project structure
 
@@ -35,15 +47,16 @@ Open `http://localhost:8080`, click **Connect**, select **C3-Tracker**.
 ├── main/                 Orchestration only (app_main)
 ├── components/
 │   ├── board/            Pin / address map
+│   ├── device_config/    NVS mode, name, pod id
 │   ├── i2c_bus/          Single I2C master owner
 │   ├── qmi8658/          IMU driver
 │   ├── qmc5883p/         Magnetometer driver
 │   ├── sensor_protocol/  BLE wire frame + UUIDs
 │   ├── sensor_stream/    100 Hz sampling task
-│   ├── ble_tracker/      NimBLE peripheral (LBS + motion)
-│   ├── ui/               LEDs + button
-│   ├── battery/          ADC (scaffold)
-│   └── power/            Sleep policy (scaffold)
+│   ├── ble_tracker/      NimBLE motion + config peripheral
+│   ├── ui/               Status LEDs + long-press
+│   ├── battery/          ADC oneshot on GPIO2 → pack mV / %
+│   └── power/            Three-minute light-sleep policy
 └── web/ble_plotter/      Local Web Bluetooth UI
 ```
 

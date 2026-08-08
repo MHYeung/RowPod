@@ -1,12 +1,13 @@
 const HEADER =
-  "arrival_ms,sample_ms,seq,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,mx_G,my_G,mz_G,ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw,mx_raw,my_raw,mz_raw";
+  "position,device_id,pod_id,synced_ms,arrival_ms,sample_ms,seq,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,mx_G,my_G,mz_G,ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw,mx_raw,my_raw,mz_raw";
 
 export class CsvLogger {
   constructor() {
     this.rows = [];
     this.recording = false;
     this.t0 = 0;
-    this.firstSeq = null;
+    /** @type {Map<string,{firstSeq:number|null,rateHz:number}>} */
+    this.podState = new Map();
     this.onChange = null;
   }
 
@@ -14,7 +15,7 @@ export class CsvLogger {
     this.rows = [HEADER];
     this.recording = true;
     this.t0 = performance.now();
-    this.firstSeq = null;
+    this.podState.clear();
     this._emit();
   }
 
@@ -26,20 +27,36 @@ export class CsvLogger {
   clear() {
     this.rows = [];
     this.recording = false;
+    this.podState.clear();
     this._emit();
   }
 
-  /** @param {{seq:number, eng:object, raw:object}} frame @param {number} rateHz */
-  push(frame, rateHz) {
+  /**
+   * @param {{seq:number, eng:object, raw:object}} frame
+   * @param {{position:string,deviceId:string,podId:number,rateHz:number,syncedMs?:number}} pod
+   */
+  push(frame, pod) {
     if (!this.recording) return;
-    if (this.firstSeq === null) this.firstSeq = frame.seq;
+    const id = pod.deviceId || "unknown";
+    let st = this.podState.get(id);
+    if (!st) {
+      st = { firstSeq: null, rateHz: pod.rateHz || 100 };
+      this.podState.set(id, st);
+    }
+    if (st.firstSeq === null) st.firstSeq = frame.seq;
     const arrivalMs = (performance.now() - this.t0).toFixed(1);
-    const seqDelta = (frame.seq - this.firstSeq + 0x10000) & 0xffff;
-    const sampleMs = ((seqDelta * 1000) / rateHz).toFixed(1);
+    const seqDelta = (frame.seq - st.firstSeq + 0x10000) & 0xffff;
+    const sampleMs = ((seqDelta * 1000) / st.rateHz).toFixed(1);
+    const syncedMs =
+      pod.syncedMs != null ? Number(pod.syncedMs).toFixed(1) : arrivalMs;
     const e = frame.eng;
     const r = frame.raw;
     this.rows.push(
       [
+        JSON.stringify(pod.position || ""),
+        id,
+        pod.podId ?? "",
+        syncedMs,
         arrivalMs,
         sampleMs,
         frame.seq,
