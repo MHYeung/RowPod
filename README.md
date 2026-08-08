@@ -21,13 +21,13 @@ idf.py -p COMx flash monitor
 
 ## Web plotter
 
-**Hosted (recommended):** after the one-time Pages setup in
+**Hosted (recommended, GitHub Pro):** after the one-time Pages setup in
 [`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md), open:
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Dashboard/?v=7`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=7`
 
-The private firmware repo deploys only `web/ble_plotter/` to the public
-dashboard repo via GitHub Actions (`DASHBOARD_DEPLOY_TOKEN` secret).
+Actions deploys only `web/ble_plotter/` as the Pages site; firmware stays on
+`main`. The site URL is still publicly reachable.
 
 **Local fallback:**
 

@@ -4,11 +4,11 @@ Chrome/Edge page for single-pod logging and multi-pod overlay monitoring.
 
 ## Hosted URL
 
-Published from the private firmware repo to a **public** Pages repo (option B):
+GitHub Pages on the private Pro repo (static `web/ble_plotter/` only):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Dashboard/?v=7`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=7`
 
-Setup steps: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
+Setup: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
 
 ## Local serve
 

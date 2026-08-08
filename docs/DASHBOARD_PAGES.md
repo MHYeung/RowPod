@@ -1,70 +1,43 @@
-# Public dashboard on GitHub Pages (option B)
+# Dashboard on GitHub Pages (same private repo)
 
-Firmware stays in the **private** repo. Only `web/ble_plotter/` is published to a
-**public** repository so Chrome can load it over HTTPS.
+With **GitHub Pro**, Pages can publish from this private repository. Only the
+static files under `web/ble_plotter/` are deployed; firmware source stays in
+`main` and is not the Pages artifact.
 
-## Target URLs
+## URL
 
-| Item | Value |
-|------|--------|
-| Public repo | `https://github.com/MHYeung/ESP32C3_MotionTracking_Dashboard` |
-| Site (after Pages is on) | `https://mhyeung.github.io/ESP32C3_MotionTracking_Dashboard/` |
-| Workflow | `.github/workflows/deploy-dashboard.yml` |
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=7`
 
-Web Bluetooth requires HTTPS (or localhost). GitHub Pages satisfies that.
+Chrome or Edge. Hard-refresh if scripts look stale.
 
-## One-time setup (you do this in the browser)
+> The site URL is still **public** (anyone with the link can open the UI).
+> Pro does not hide the hosted page; it only lets you publish from a private repo.
+> BLE still needs a nearby pod and a browser gesture.
 
-### 1. Create the public repo
+## One-time setup
 
-1. GitHub → **New repository**
-2. Name: `ESP32C3_MotionTracking_Dashboard`
-3. Visibility: **Public**
-4. Do **not** add a README/license (empty is fine)
-5. Create
+1. Open  
+   `https://github.com/MHYeung/ESP32C3_MotionTracking_Gadget/settings/pages`
+2. **Build and deployment → Source:** **GitHub Actions**
+3. Save (no `DASHBOARD_DEPLOY_TOKEN` needed)
+4. Push this workflow (or **Actions → Deploy dashboard → Run workflow**)
 
-### 2. Create a deploy token
+You can delete the unused public `ESP32C3_MotionTracking_Dashboard` repo if you
+created it earlier, and remove the old `DASHBOARD_DEPLOY_TOKEN` secret.
 
-1. GitHub → **Settings → Developer settings → Personal access tokens**
-2. Prefer a **fine-grained** token:
-   - Resource owner: your user
-   - Repository access: **Only** `ESP32C3_MotionTracking_Dashboard`
-   - Permissions: **Contents = Read and write**
-3. Copy the token once
+## Trigger a deploy
 
-### 3. Add the secret on the private repo
-
-1. Open private repo `ESP32C3_MotionTracking_Gadget`
-2. **Settings → Secrets and variables → Actions → New repository secret**
-3. Name: `DASHBOARD_DEPLOY_TOKEN`
-4. Value: the token from step 2
-
-### 4. Enable Pages on the public repo
-
-After the first successful workflow run (or after it creates `gh-pages`):
-
-1. Open `ESP32C3_MotionTracking_Dashboard`
-2. **Settings → Pages**
-3. Source: **Deploy from a branch**
-4. Branch: `gh-pages` / folder `/ (root)` → Save
-
-Wait ~1 minute, then open:
-
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Dashboard/?v=7`
-
-Use Chrome or Edge. Hard-refresh if scripts look stale.
-
-### 5. Trigger a deploy
-
-- Push a change under `web/ble_plotter/`, or
+- Push changes under `web/ble_plotter/`, or
 - **Actions → Deploy dashboard → Run workflow**
 
-## Security notes
+## Troubleshooting
 
-- The published site is **public** (anyone with the URL can open the UI).
-- It cannot flash your pods by itself; BLE still needs physical proximity + user gesture.
-- Do **not** put firmware, keys, or private schematic PDFs into `web/ble_plotter/`.
-- Rotate `DASHBOARD_DEPLOY_TOKEN` if it leaks.
+| Issue | Fix |
+|-------|-----|
+| Workflow blocked / Pages permission | Settings → Pages → Source must be **GitHub Actions** |
+| 404 after green deploy | Wait 1–2 min; open the URL with `/?v=7` |
+| Environment approval wait | Settings → Environments → `github-pages` → remove required reviewers if you added any |
+| Web Bluetooth fails | Must use the `https://…github.io/…` URL (or localhost), not `file://` |
 
 ## Local fallback
 
