@@ -47,6 +47,9 @@ static const ble_uuid128_t uuid_cfg_sync =
 static const ble_uuid128_t uuid_cfg_batt =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
                      0x71, 0x4f, 0x2f, 0x2b, 0x04, 0x20, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_cfg_rate =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x05, 0x20, 0x7e, 0x9b);
 
 static uint8_t s_own_addr_type;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -56,6 +59,7 @@ static uint16_t s_info_val_handle;
 static uint16_t s_name_val_handle;
 static uint16_t s_sync_val_handle;
 static uint16_t s_batt_val_handle;
+static uint16_t s_rate_val_handle;
 static bool s_notify_enabled;
 static volatile bool s_advertising;
 static volatile bool s_stack_running;
@@ -199,6 +203,28 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
                    ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
 
+    if (attr_handle == s_rate_val_handle) {
+        if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+            uint8_t hz = sensor_stream_get_rate_hz();
+            return os_mbuf_append(ctxt->om, &hz, 1) == 0
+                       ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
+        if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+            if (OS_MBUF_PKTLEN(ctxt->om) < SENSOR_PROTO_CFG_RATE_LEN) {
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            }
+            uint8_t hz = 0;
+            if (ble_hs_mbuf_to_flat(ctxt->om, &hz, 1, NULL) != 0) {
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            if (sensor_stream_set_rate_hz(hz) != ESP_OK) {
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            return 0;
+        }
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
     if (attr_handle == s_sync_val_handle) {
         if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
             if (OS_MBUF_PKTLEN(ctxt->om) < SENSOR_PROTO_CFG_SYNC_REQ_LEN) {
@@ -298,6 +324,13 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .access_cb = cfg_access,
                 .flags = BLE_GATT_CHR_F_READ,
                 .val_handle = &s_batt_val_handle,
+            },
+            {
+                .uuid = &uuid_cfg_rate.u,
+                .access_cb = cfg_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
+                         BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .val_handle = &s_rate_val_handle,
             },
             { 0 },
         },
@@ -421,9 +454,13 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             s_notify_enabled = event->subscribe.cur_notify;
             ESP_LOGI(TAG, "motion notify %s",
                      s_notify_enabled ? "ON" : "OFF");
+            if (!s_notify_enabled) {
+                /* No subscriber → stop sampling (no radio broadcast of IMU). */
+                (void)sensor_stream_set_rate_hz(SENSOR_PROTO_RATE_LIVE_HZ);
+            }
             sensor_stream_set_enabled(s_notify_enabled);
             set_ui_state(s_notify_enabled ? UI_STATE_STREAMING
-                                           : UI_STATE_CONNECTED);
+                                         : UI_STATE_CONNECTED);
         }
         break;
     case BLE_GAP_EVENT_MTU:

@@ -13,13 +13,26 @@ typedef void (*sensor_stream_frame_cb_t)(const sensor_proto_frame_t *frame, void
 
 /**
  * @brief Init I2C + sensors and start the sampling task (paused until enable).
+ *
+ * Default rate is SENSOR_PROTO_RATE_LIVE_HZ. Sampling runs only while enabled
+ * (typically when a peer has motion CCCD notify on).
  */
 esp_err_t sensor_stream_init(void);
 
-/** @brief Start/stop 100 Hz sampling. When disabled, sensors stay powered but idle. */
+/** @brief Start/stop sampling. When disabled, sensors stay powered but idle. */
 void sensor_stream_set_enabled(bool enabled);
 
 bool sensor_stream_is_enabled(void);
+
+/**
+ * @brief Change host sample rate (50, 100, or 150 Hz).
+ *
+ * Updates meta.rate_hz and IMU ODR. Safe to call from BLE callbacks; the
+ * sensor task applies the period on its next wake.
+ */
+esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz);
+
+uint8_t sensor_stream_get_rate_hz(void);
 
 /**
  * @brief Register callback invoked from the sensor task after each successful sample.

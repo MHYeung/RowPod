@@ -1,0 +1,39 @@
+# Deploy only web/ble_plotter → public Pages repo (firmware stays private).
+# Setup: see docs/DASHBOARD_PAGES.md
+name: Deploy dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/ble_plotter/**"
+      - ".github/workflows/deploy-dashboard.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dashboard
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+
+      - name: Ensure Pages ignores Jekyll
+        run: touch web/ble_plotter/.nojekyll
+
+      - name: Publish to public dashboard repo
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.DASHBOARD_DEPLOY_TOKEN }}
+          external_repository: MHYeung/ESP32C3_MotionTracking_Dashboard
+          publish_dir: ./web/ble_plotter
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com

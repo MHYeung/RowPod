@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>C3-Tracker Web BLE</title>
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <header>
     <h1>C3-Tracker</h1>
-    <p class="sub">Single-pod logging and multi-pod overlay motion network · dashboard v6</p>
+    <p class="sub">Single-pod logging and multi-pod overlay motion network · dashboard v7</p>
   </header>
 
   <section class="controls">
@@ -68,7 +68,8 @@
 
   <section id="panel-logging" class="tab-panel" role="tabpanel" hidden>
     <p class="hint">
-      Records engineering + raw values for all connected pods. Includes position, device id, and synced_ms.
+      Live monitor stays at 50 Hz. Start raises pods to 150 Hz (1 pod) or 100 Hz (multi-pod).
+      CSV is a ring buffer (newest keeps; oldest drops) with a v2 comment header.
     </p>
     <section class="log-controls">
       <button id="btnLogStart" type="button" disabled>Start</button>
@@ -79,6 +80,6 @@
     </section>
   </section>
 
-  <script type="module" src="app.js?v=6"></script>
+  <script type="module" src="app.js?v=7"></script>
 </body>
 </html>

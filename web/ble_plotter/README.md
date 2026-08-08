@@ -1,17 +1,25 @@
 # C3-Tracker Web Bluetooth Plotter
 
-Local Chrome/Edge page for single-pod logging and multi-pod overlay monitoring.
+Chrome/Edge page for single-pod logging and multi-pod overlay monitoring.
 
-## Serve (required)
+## Hosted URL
 
-Web Bluetooth needs a secure context. Use localhost:
+Published from the private firmware repo to a **public** Pages repo (option B):
+
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Dashboard/?v=7`
+
+Setup steps: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
+
+## Local serve
+
+Web Bluetooth needs a secure context (`https://` or `localhost`):
 
 ```sh
 cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open **http://localhost:8080/?v=6** (not `file://`). Hard-refresh if UI looks stale.
+Open **http://localhost:8080/?v=7** (not `file://`). Hard-refresh if UI looks stale.
 
 ## Steps
 
@@ -41,6 +49,13 @@ Open **http://localhost:8080/?v=6** (not `file://`). Hard-refresh if UI looks st
 - Read/Write `…2002`: UTF-8 advertised/position name (≤20 chars)
 - Write/Notify `…2003`: software sync request/response
 - Read `…2004`: battery `u16 mV LE + u8 percent + u8 flags` (bit0 = valid)
+- Read/Write `…2005`: sample rate Hz (`50` live, `100` / `150` log)
+
+### Rates
+
+- Connected live monitor: **50 Hz** (plots decimate to ~50 Hz if the pod is logging faster)
+- Logging: **150 Hz** (one pod) or **100 Hz** (2+ pods); CSV ring retains newest rows
+- No motion CCCD → sampling off (no IMU broadcast)
 
 ## Limits
 

@@ -9,7 +9,7 @@ magnetometer, CA-C03 chip antenna, and a local Web Bluetooth plotter.
 
 - ESP-IDF **6.0.1** (or compatible 6.x)
 - Target chip: **esp32c3**
-- Chrome or Edge for the Web Bluetooth plotter (`http://localhost`)
+- Chrome or Edge for the Web Bluetooth plotter (HTTPS or `localhost`)
 
 ## Build & flash
 
@@ -21,12 +21,22 @@ idf.py -p COMx flash monitor
 
 ## Web plotter
 
+**Hosted (recommended):** after the one-time Pages setup in
+[`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md), open:
+
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Dashboard/?v=7`
+
+The private firmware repo deploys only `web/ble_plotter/` to the public
+dashboard repo via GitHub Actions (`DASHBOARD_DEPLOY_TOKEN` secret).
+
+**Local fallback:**
+
 ```sh
 cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=5`, click **Add pod**, select a tracker.
+Open `http://localhost:8080/?v=7`, click **Add pod**, select a tracker.
 
 ## Single / multi-pod modes
 
@@ -52,7 +62,7 @@ Open `http://localhost:8080/?v=5`, click **Add pod**, select a tracker.
 │   ├── qmi8658/          IMU driver
 │   ├── qmc5883p/         Magnetometer driver
 │   ├── sensor_protocol/  BLE wire frame + UUIDs
-│   ├── sensor_stream/    100 Hz sampling task
+│   ├── sensor_stream/    50 Hz live / 100–150 Hz log sampling task
 │   ├── ble_tracker/      NimBLE motion + config peripheral
 │   ├── ui/               Status LEDs + long-press
 │   ├── battery/          ADC oneshot on GPIO2 → pack mV / %

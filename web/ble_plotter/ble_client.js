@@ -2,11 +2,13 @@ import {
   CFG_BATT,
   CFG_INFO,
   CFG_NAME,
+  CFG_RATE,
   CFG_SVC,
   CFG_SYNC,
   MOTION_DATA,
   MOTION_META,
   MOTION_SVC,
+  RATE_LIVE_HZ,
   decodeBatt,
   decodeCfgInfo,
   decodeFrame,
@@ -22,11 +24,12 @@ export class BleClient {
     this.nameChar = null;
     this.syncChar = null;
     this.battChar = null;
+    this.rateChar = null;
     this.meta = {
       accel_lsb_per_g: 4096,
       gyro_lsb_per_dps: 64,
       mag_lsb_per_gauss: 1000,
-      rate_hz: 100,
+      rate_hz: RATE_LIVE_HZ,
       flags: 0,
     };
     this.info = { mode: 0, podId: 0, hasCustomName: false };
@@ -84,6 +87,11 @@ export class BleClient {
       } catch (_) {
         this.battChar = null;
       }
+      try {
+        this.rateChar = await cfg.getCharacteristic(CFG_RATE);
+      } catch (_) {
+        this.rateChar = null;
+      }
       const infoView = await infoChar.readValue();
       this.info = decodeCfgInfo(infoView);
       const nameView = await this.nameChar.readValue();
@@ -91,6 +99,7 @@ export class BleClient {
       await this.syncChar.startNotifications();
       this.syncChar.addEventListener("characteristicvaluechanged", this._boundSync);
       await this.readBattery();
+      await this.setRate(RATE_LIVE_HZ);
     } catch (e) {
       console.warn("config service unavailable", e);
     }
@@ -122,6 +131,17 @@ export class BleClient {
     const view = await this.battChar.readValue();
     this.battery = decodeBatt(view);
     return this.battery;
+  }
+
+  /** @param {50|100|150} hz */
+  async setRate(hz) {
+    if (![50, 100, 150].includes(hz)) {
+      throw new Error(`unsupported rate ${hz}`);
+    }
+    if (this.rateChar) {
+      await this.rateChar.writeValueWithoutResponse(Uint8Array.of(hz));
+    }
+    this.meta.rate_hz = hz;
   }
 
   /**
@@ -217,6 +237,7 @@ export class BleClient {
     this.nameChar = null;
     this.syncChar = null;
     this.battChar = null;
+    this.rateChar = null;
     this.server = null;
     while (this._syncWaiters.length) {
       this._syncWaiters.shift().resolve?.({ clientMs: 0, deviceUs: 0, seq: 0 });

@@ -14,19 +14,38 @@ static const char *TAG = "sensor_stream";
 static TaskHandle_t s_task;
 static QueueHandle_t s_latest_q;
 static volatile bool s_enabled;
+static volatile uint8_t s_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+static volatile bool s_rate_dirty;
 static volatile uint32_t s_dropped;
 static sensor_stream_frame_cb_t s_cb;
 static void *s_cb_ctx;
 static sensor_proto_meta_t s_meta;
 static uint16_t s_seq;
 
+static bool rate_allowed(uint8_t hz)
+{
+    return hz == 50 || hz == 100 || hz == 150;
+}
+
 static void stream_task(void *arg)
 {
     (void)arg;
     TickType_t last = xTaskGetTickCount();
-    const TickType_t period = pdMS_TO_TICKS(1000 / SENSOR_PROTO_RATE_HZ);
+    uint8_t applied = s_rate_hz;
 
     for (;;) {
+        if (s_rate_dirty) {
+            uint8_t want = s_rate_hz;
+            if (qmi8658_set_odr_for_rate(want) == ESP_OK) {
+                applied = want;
+                s_meta.rate_hz = want;
+            } else {
+                ESP_LOGW(TAG, "ODR update failed; keeping %u Hz period", applied);
+            }
+            s_rate_dirty = false;
+            last = xTaskGetTickCount();
+        }
+
         if (!s_enabled) {
             vTaskDelay(pdMS_TO_TICKS(50));
             last = xTaskGetTickCount();
@@ -60,10 +79,15 @@ static void stream_task(void *arg)
                 s_cb(&frame, s_cb_ctx);
             }
         } else {
-            ESP_LOGW(TAG, "sample fail IMU=%s MAG=%s", esp_err_to_name(e1), esp_err_to_name(e2));
+            ESP_LOGW(TAG, "sample fail IMU=%s MAG=%s", esp_err_to_name(e1),
+                     esp_err_to_name(e2));
             s_dropped++;
         }
 
+        TickType_t period = pdMS_TO_TICKS(1000 / (applied ? applied : 50));
+        if (period < 1) {
+            period = 1;
+        }
         vTaskDelayUntil(&last, period);
     }
 }
@@ -73,15 +97,19 @@ esp_err_t sensor_stream_init(void)
     ESP_RETURN_ON_ERROR(i2c_bus_init(), TAG, "i2c");
     ESP_RETURN_ON_ERROR(qmi8658_init(), TAG, "imu");
     ESP_RETURN_ON_ERROR(qmc5883p_init(), TAG, "mag");
+    ESP_RETURN_ON_ERROR(qmi8658_set_odr_for_rate(SENSOR_PROTO_RATE_LIVE_HZ), TAG,
+                        "odr");
 
     qmi8658_scale_t as = {0};
     qmc5883p_scale_t ms = {0};
     ESP_RETURN_ON_ERROR(qmi8658_get_scale(&as), TAG, "a scale");
     ESP_RETURN_ON_ERROR(qmc5883p_get_scale(&ms), TAG, "m scale");
 
+    s_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+    s_rate_dirty = false;
     s_meta = (sensor_proto_meta_t){
         .ver = SENSOR_PROTO_FORMAT_VER,
-        .rate_hz = SENSOR_PROTO_RATE_HZ,
+        .rate_hz = SENSOR_PROTO_RATE_LIVE_HZ,
         .accel_lsb_per_g = as.accel_lsb_per_g,
         .gyro_lsb_per_dps = as.gyro_lsb_per_dps,
         .mag_lsb_per_gauss = ms.lsb_per_gauss,
@@ -92,9 +120,11 @@ esp_err_t sensor_stream_init(void)
     s_latest_q = xQueueCreate(1, sizeof(sensor_proto_frame_t));
     ESP_RETURN_ON_FALSE(s_latest_q, ESP_ERR_NO_MEM, TAG, "queue");
 
-    BaseType_t ok = xTaskCreate(stream_task, "sensor_stream", 4096, NULL, 5, &s_task);
+    BaseType_t ok =
+        xTaskCreate(stream_task, "sensor_stream", 4096, NULL, 5, &s_task);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "task");
-    ESP_LOGI(TAG, "ready @ %u Hz (paused until enable)", SENSOR_PROTO_RATE_HZ);
+    ESP_LOGI(TAG, "ready @ %u Hz live (paused until enable)",
+             SENSOR_PROTO_RATE_LIVE_HZ);
     return ESP_OK;
 }
 
@@ -107,6 +137,23 @@ void sensor_stream_set_enabled(bool enabled)
 bool sensor_stream_is_enabled(void)
 {
     return s_enabled;
+}
+
+esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz)
+{
+    if (!rate_allowed(rate_hz)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_rate_hz = rate_hz;
+    s_meta.rate_hz = rate_hz;
+    s_rate_dirty = true;
+    ESP_LOGI(TAG, "rate request %u Hz", rate_hz);
+    return ESP_OK;
+}
+
+uint8_t sensor_stream_get_rate_hz(void)
+{
+    return s_rate_hz;
 }
 
 void sensor_stream_set_frame_cb(sensor_stream_frame_cb_t cb, void *ctx)

@@ -36,6 +36,13 @@ esp_err_t qmi8658_read_raw(qmi8658_raw_t *out);
 /** @brief Scale metadata matching the last successful init configuration. */
 esp_err_t qmi8658_get_scale(qmi8658_scale_t *out);
 
+/**
+ * @brief Select IMU ODR band for a target host sample rate (50 / 100 / 150 Hz).
+ *
+ * Must be called from the I2C-owning task (sensor_stream).
+ */
+esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz);
+
 #ifdef __cplusplus
 }
 #endif

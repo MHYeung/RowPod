@@ -1,4 +1,4 @@
-import { CHANNELS } from "./protocol.js";
+import { CHANNELS, RATE_LIVE_HZ, RATE_LOG_HZ, RATE_LOG_MAX_HZ } from "./protocol.js";
 import { MultiPlot } from "./plot.js";
 import { OrientationCube, attitudeFromSensors } from "./orientation.js";
 import { CsvLogger } from "./csv_log.js";
@@ -28,7 +28,7 @@ function setStatus(text, cls = "") {
 
 try {
   if (!btnAddPod || !podListEl) {
-    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=5");
+    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=7");
   }
 
   const plotAccel = new MultiPlot(document.getElementById("plotAccel"), ["ax", "ay", "az"], {
@@ -75,10 +75,18 @@ try {
     });
   });
 
+  function chooseLogRateHz() {
+    const n = registry.list().filter((s) => s.status === "connected").length;
+    return n <= 1 ? RATE_LOG_MAX_HZ : RATE_LOG_HZ;
+  }
+
   function updateLogUi() {
     const n = registry.list().filter((s) => s.status === "connected").length;
+    const drop = logger.droppedCount ? ` · dropped ${logger.droppedCount}` : "";
     logRowsEl.textContent = String(logger.rowCount);
-    logStateEl.textContent = logger.recording ? "recording" : "idle";
+    logStateEl.textContent = logger.recording
+      ? `recording @ ${chooseLogRateHz()} Hz${drop}`
+      : `idle (live ${RATE_LIVE_HZ} Hz)${drop}`;
     btnLogStart.disabled = n < 1 || logger.recording;
     btnLogStop.disabled = n < 1 || !logger.recording;
     btnLogDownload.disabled = logger.rowCount < 1;
@@ -239,9 +247,15 @@ try {
   registry.onStats = updatePodCardStats;
 
   registry.onFrame = (session, frame, syncedMs) => {
-    plotAccel.pushSeries(session.id, frame.eng);
-    plotGyro.pushSeries(session.id, frame.eng);
-    plotMag.pushSeries(session.id, frame.eng);
+    /* Keep plot density near live rate even while the pod streams at log rate. */
+    const deviceHz = session.client.meta.rate_hz || RATE_LIVE_HZ;
+    const keepEvery = Math.max(1, Math.round(deviceHz / RATE_LIVE_HZ));
+    session._plotTick = (session._plotTick || 0) + 1;
+    if (session._plotTick % keepEvery === 0) {
+      plotAccel.pushSeries(session.id, frame.eng);
+      plotGyro.pushSeries(session.id, frame.eng);
+      plotMag.pushSeries(session.id, frame.eng);
+    }
 
     if (registry.selectedId === session.id) {
       const { ax, ay, az, mx, my, mz } = frame.eng;
@@ -293,8 +307,36 @@ try {
     setStatus("Disconnected all pods");
   });
 
-  btnLogStart.addEventListener("click", () => logger.start());
-  btnLogStop.addEventListener("click", () => logger.stop());
+  btnLogStart.addEventListener("click", async () => {
+    const logHz = chooseLogRateHz();
+    try {
+      setStatus(`Raising pods to ${logHz} Hz for logging…`);
+      await registry.setRateAll(logHz);
+      logger.start({
+        liveRateHz: RATE_LIVE_HZ,
+        logRateHz: logHz,
+        pods: registry.list().map((s) => ({
+          id: s.id,
+          position: s.position,
+          podId: s.podId,
+          sync: s.sync,
+        })),
+      });
+      setStatus(`Logging @ ${logHz} Hz`, "ok");
+    } catch (e) {
+      setStatus(String(e.message || e), "err");
+    }
+  });
+  btnLogStop.addEventListener("click", async () => {
+    logger.stop();
+    try {
+      await registry.setRateAll(RATE_LIVE_HZ);
+      setStatus(`Log stopped — live monitor @ ${RATE_LIVE_HZ} Hz`);
+    } catch (e) {
+      setStatus(String(e.message || e), "err");
+    }
+    updateLogUi();
+  });
   btnLogClear.addEventListener("click", () => logger.clear());
   btnLogDownload.addEventListener("click", () => {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");

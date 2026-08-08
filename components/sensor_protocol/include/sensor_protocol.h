@@ -20,17 +20,25 @@ extern "C" {
 #define SENSOR_PROTO_CFG_NAME_UUID_STR  "9b7e2002-2b2f-4f71-9b86-4bb2e6d54f00"
 #define SENSOR_PROTO_CFG_SYNC_UUID_STR  "9b7e2003-2b2f-4f71-9b86-4bb2e6d54f00"
 #define SENSOR_PROTO_CFG_BATT_UUID_STR  "9b7e2004-2b2f-4f71-9b86-4bb2e6d54f00"
+#define SENSOR_PROTO_CFG_RATE_UUID_STR  "9b7e2005-2b2f-4f71-9b86-4bb2e6d54f00"
 
 #define SENSOR_PROTO_FRAME_LEN      20
 #define SENSOR_PROTO_META_LEN       12
 #define SENSOR_PROTO_CFG_INFO_LEN   4
 #define SENSOR_PROTO_CFG_BATT_LEN   4
+#define SENSOR_PROTO_CFG_RATE_LEN   1
 #define SENSOR_PROTO_CFG_SYNC_REQ_LEN  8
 #define SENSOR_PROTO_CFG_SYNC_RSP_LEN  20
 /** batt.flags bit0: reading valid */
 #define SENSOR_PROTO_BATT_FLAG_VALID  0x01
 #define SENSOR_PROTO_FORMAT_VER     1
-#define SENSOR_PROTO_RATE_HZ        100
+/** Default stream rate while connected for live monitor (not logging). */
+#define SENSOR_PROTO_RATE_LIVE_HZ   50
+/** High-rate capture while the dashboard is logging. */
+#define SENSOR_PROTO_RATE_LOG_HZ    100
+#define SENSOR_PROTO_RATE_LOG_MAX_HZ 150
+/** @deprecated use SENSOR_PROTO_RATE_LIVE_HZ */
+#define SENSOR_PROTO_RATE_HZ        SENSOR_PROTO_RATE_LIVE_HZ
 
 /** meta.flags bit0: multi-pod mode active on device. */
 #define SENSOR_PROTO_FLAG_MULTI     0x0001

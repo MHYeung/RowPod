@@ -9,9 +9,15 @@ export const CFG_INFO = "9b7e2001-2b2f-4f71-9b86-4bb2e6d54f00";
 export const CFG_NAME = "9b7e2002-2b2f-4f71-9b86-4bb2e6d54f00";
 export const CFG_SYNC = "9b7e2003-2b2f-4f71-9b86-4bb2e6d54f00";
 export const CFG_BATT = "9b7e2004-2b2f-4f71-9b86-4bb2e6d54f00";
+export const CFG_RATE = "9b7e2005-2b2f-4f71-9b86-4bb2e6d54f00";
 
 export const FLAG_MULTI = 0x0001;
 export const BATT_FLAG_VALID = 0x01;
+
+/** Device stream rates (must match firmware allow-list). */
+export const RATE_LIVE_HZ = 50;
+export const RATE_LOG_HZ = 100;
+export const RATE_LOG_MAX_HZ = 150;
 
 export const CHANNELS = [
   { key: "ax", group: "accel", color: "#f07178", label: "Ax" },

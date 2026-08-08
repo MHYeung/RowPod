@@ -96,6 +96,27 @@ esp_err_t qmi8658_read_raw(qmi8658_raw_t *out)
     return ESP_OK;
 }
 
+esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz)
+{
+    ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not ready");
+    /* CTRL2/3 low nibble = ODR. Keep FS bits (±8 g / ±512 dps). */
+    uint8_t odr;
+    if (rate_hz <= 50) {
+        odr = 0x04; /* ~56 Hz */
+    } else if (rate_hz <= 100) {
+        odr = 0x06; /* ~113 Hz */
+    } else {
+        odr = 0x07; /* ~225 Hz — host may pull at 150 Hz */
+    }
+    uint8_t ctrl2 = (uint8_t)((0x02 << 4) | odr);
+    uint8_t ctrl3 = (uint8_t)((0x02 << 4) | odr);
+    ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL2, ctrl2), TAG, "CTRL2");
+    ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL3, ctrl3), TAG, "CTRL3");
+    ESP_LOGI(TAG, "ODR band for %u Hz → CTRL2=0x%02X CTRL3=0x%02X", rate_hz, ctrl2,
+             ctrl3);
+    return ESP_OK;
+}
+
 esp_err_t qmi8658_get_scale(qmi8658_scale_t *out)
 {
     ESP_RETURN_ON_FALSE(s_ready && out, ESP_ERR_INVALID_STATE, TAG, "bad state");

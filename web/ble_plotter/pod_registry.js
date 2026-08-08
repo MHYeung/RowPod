@@ -160,6 +160,19 @@ export class PodRegistry {
     this._emitStats();
   }
 
+  /** @param {50|100|150} hz */
+  async setRateAll(hz) {
+    for (const s of this.sessions.values()) {
+      if (s.status !== "connected") continue;
+      try {
+        await s.client.setRate(hz);
+      } catch (e) {
+        console.warn("setRate failed", s.position, e);
+      }
+    }
+    this._emitStats();
+  }
+
   async disconnect(id) {
     const session = this.sessions.get(id);
     if (!session) return;
