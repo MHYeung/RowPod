@@ -14,26 +14,23 @@ extern "C" {
 
 typedef enum {
     DEVICE_MODE_SINGLE = 0,
-    DEVICE_MODE_MULTI = 1,
 } device_mode_t;
 
 /**
- * @brief Load persisted mode/name/pod_id from NVS (or create defaults).
+ * @brief Load persisted name/pod_id from NVS (or create defaults).
  *
  * Call after nvs_flash_init() and before ble_tracker_init().
  */
 esp_err_t device_config_init(void);
 
+/** @brief Return the fixed single-node device mode. */
 device_mode_t device_config_get_mode(void);
-
-/** @brief Toggle single/multi and persist. Returns the new mode. */
-esp_err_t device_config_toggle_mode(device_mode_t *out_mode);
 
 /** @brief Stable 16-bit pod identifier derived once and stored in NVS. */
 uint16_t device_config_get_pod_id(void);
 
 /**
- * @brief Copy the active advertised name (custom or mode default).
+ * @brief Copy the active advertised name (custom or unique pod default).
  *
  * @param out Buffer of at least DEVICE_CONFIG_NAME_MAX + 1 bytes.
  */
@@ -45,7 +42,7 @@ bool device_config_has_custom_name(void);
 /**
  * @brief Persist a custom position/name used as the BLE advertised name.
  *
- * Empty string clears the custom name and restores the mode default.
+ * Empty string clears the custom name and restores the unique pod default.
  */
 esp_err_t device_config_set_name(const char *name);
 

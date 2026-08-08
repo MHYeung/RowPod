@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "board_pins.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -15,7 +14,6 @@
 static const char *TAG = "device_cfg";
 static const char *NVS_NS = "pod";
 
-static device_mode_t s_mode = DEVICE_MODE_SINGLE;
 static uint16_t s_pod_id;
 static char s_custom_name[DEVICE_CONFIG_NAME_MAX + 1];
 static bool s_has_custom_name;
@@ -55,11 +53,6 @@ static uint16_t make_pod_id(void)
     return (uint16_t)(esp_random() & 0xffffu);
 }
 
-static esp_err_t save_u8(nvs_handle_t h, const char *key, uint8_t v)
-{
-    return nvs_set_u8(h, key, v);
-}
-
 static esp_err_t save_u16(nvs_handle_t h, const char *key, uint16_t v)
 {
     return nvs_set_u16(h, key, v);
@@ -69,10 +62,7 @@ static esp_err_t persist(void)
 {
     nvs_handle_t h;
     ESP_RETURN_ON_ERROR(nvs_open(NVS_NS, NVS_READWRITE, &h), TAG, "nvs open");
-    esp_err_t err = save_u8(h, "mode", (uint8_t)s_mode);
-    if (err == ESP_OK) {
-        err = save_u16(h, "pod_id", s_pod_id);
-    }
+    esp_err_t err = save_u16(h, "pod_id", s_pod_id);
     if (err == ESP_OK) {
         if (s_has_custom_name) {
             err = nvs_set_str(h, "name", s_custom_name);
@@ -99,13 +89,6 @@ esp_err_t device_config_init(void)
         return err;
     }
 
-    uint8_t mode = DEVICE_MODE_SINGLE;
-    if (nvs_get_u8(h, "mode", &mode) != ESP_OK ||
-        (mode != DEVICE_MODE_SINGLE && mode != DEVICE_MODE_MULTI)) {
-        mode = DEVICE_MODE_SINGLE;
-    }
-    s_mode = (device_mode_t)mode;
-
     if (nvs_get_u16(h, "pod_id", &s_pod_id) != ESP_OK || s_pod_id == 0) {
         s_pod_id = make_pod_id();
         if (s_pod_id == 0) {
@@ -127,8 +110,7 @@ esp_err_t device_config_init(void)
     nvs_close(h);
 
     s_ready = true;
-    ESP_LOGI(TAG, "mode=%s pod_id=0x%04X custom=%s",
-             s_mode == DEVICE_MODE_MULTI ? "multi" : "single",
+    ESP_LOGI(TAG, "fixed single-node pod_id=0x%04X custom=%s",
              s_pod_id,
              s_has_custom_name ? s_custom_name : "(none)");
     return ESP_OK;
@@ -136,24 +118,7 @@ esp_err_t device_config_init(void)
 
 device_mode_t device_config_get_mode(void)
 {
-    return s_mode;
-}
-
-esp_err_t device_config_toggle_mode(device_mode_t *out_mode)
-{
-    ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not ready");
-    s_mode = (s_mode == DEVICE_MODE_SINGLE) ? DEVICE_MODE_MULTI
-                                            : DEVICE_MODE_SINGLE;
-    esp_err_t err = persist();
-    if (err != ESP_OK) {
-        return err;
-    }
-    if (out_mode) {
-        *out_mode = s_mode;
-    }
-    ESP_LOGI(TAG, "mode -> %s",
-             s_mode == DEVICE_MODE_MULTI ? "multi" : "single");
-    return ESP_OK;
+    return DEVICE_MODE_SINGLE;
 }
 
 uint16_t device_config_get_pod_id(void)
@@ -170,11 +135,7 @@ esp_err_t device_config_get_adv_name(char *out, size_t out_len)
         snprintf(out, out_len, "%s", s_custom_name);
         return ESP_OK;
     }
-    if (s_mode == DEVICE_MODE_MULTI) {
-        snprintf(out, out_len, "C3-T-%04X", s_pod_id);
-        return ESP_OK;
-    }
-    snprintf(out, out_len, "%s", BOARD_DEVICE_NAME);
+    snprintf(out, out_len, "C3-T-%04X", s_pod_id);
     return ESP_OK;
 }
 

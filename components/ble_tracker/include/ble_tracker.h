@@ -37,6 +37,17 @@ bool ble_tracker_is_advertising(void);
 
 bool ble_tracker_is_connected(void);
 
+/**
+ * @brief Toggle the connected pod's BLE sensor stream.
+ *
+ * This is the firmware-side start/stop logging action for a single pod.
+ * It does not write samples to flash; the browser records received frames.
+ */
+esp_err_t ble_tracker_toggle_streaming(bool *out_enabled);
+
+/** @brief Return true when a subscriber and stream request are both active. */
+bool ble_tracker_is_streaming(void);
+
 #ifdef __cplusplus
 }
 #endif

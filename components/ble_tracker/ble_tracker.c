@@ -60,7 +60,9 @@ static uint16_t s_name_val_handle;
 static uint16_t s_sync_val_handle;
 static uint16_t s_batt_val_handle;
 static uint16_t s_rate_val_handle;
-static bool s_notify_enabled;
+static volatile bool s_notify_enabled;
+static volatile bool s_motion_subscribed;
+static volatile bool s_stream_requested;
 static volatile bool s_advertising;
 static volatile bool s_stack_running;
 static ble_tracker_link_cb_t s_link_cb;
@@ -93,6 +95,16 @@ static void set_ui_state(ui_state_t state)
     }
 }
 
+static void apply_stream_state(void)
+{
+    s_notify_enabled = s_motion_subscribed && s_stream_requested;
+    sensor_stream_set_enabled(s_notify_enabled);
+    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        set_ui_state(s_notify_enabled ? UI_STATE_STREAMING
+                                      : UI_STATE_CONNECTED);
+    }
+}
+
 static void load_adv_name(void)
 {
     if (device_config_get_adv_name(s_adv_name, sizeof(s_adv_name)) != ESP_OK) {
@@ -112,9 +124,6 @@ static int motion_access(uint16_t conn_handle, uint16_t attr_handle,
         sensor_proto_meta_t meta = {0};
         if (sensor_stream_get_meta(&meta) != ESP_OK) {
             return BLE_ATT_ERR_UNLIKELY;
-        }
-        if (device_config_get_mode() == DEVICE_MODE_MULTI) {
-            meta.flags |= SENSOR_PROTO_FLAG_MULTI;
         }
         uint8_t buf[SENSOR_PROTO_META_LEN];
         sensor_proto_pack_meta(buf, &meta);
@@ -427,6 +436,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
             s_advertising = false;
+            s_motion_subscribed = false;
+            s_stream_requested = true;
+            s_notify_enabled = false;
+            sensor_stream_set_enabled(false);
             set_ui_state(UI_STATE_CONNECTED);
             if (s_link_cb) {
                 s_link_cb(true);
@@ -443,6 +456,8 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "disconnect reason=%d", event->disconnect.reason);
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
+        s_motion_subscribed = false;
+        s_stream_requested = true;
         s_notify_enabled = false;
         sensor_stream_set_enabled(false);
         if (start_advertise() != ESP_OK) {
@@ -451,16 +466,14 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         break;
     case BLE_GAP_EVENT_SUBSCRIBE:
         if (event->subscribe.attr_handle == s_data_val_handle) {
-            s_notify_enabled = event->subscribe.cur_notify;
+            s_motion_subscribed = event->subscribe.cur_notify;
             ESP_LOGI(TAG, "motion notify %s",
-                     s_notify_enabled ? "ON" : "OFF");
-            if (!s_notify_enabled) {
+                     s_motion_subscribed ? "ON" : "OFF");
+            if (!s_motion_subscribed) {
                 /* No subscriber → stop sampling (no radio broadcast of IMU). */
                 (void)sensor_stream_set_rate_hz(SENSOR_PROTO_RATE_LIVE_HZ);
             }
-            sensor_stream_set_enabled(s_notify_enabled);
-            set_ui_state(s_notify_enabled ? UI_STATE_STREAMING
-                                         : UI_STATE_CONNECTED);
+            apply_stream_state();
         }
         break;
     case BLE_GAP_EVENT_MTU:
@@ -526,6 +539,8 @@ static esp_err_t init_stack(void)
     ble_npl_event_init(&s_notify_ev, notify_ev_cb, NULL);
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_notify_enabled = false;
+    s_motion_subscribed = false;
+    s_stream_requested = true;
     s_frame_pending = false;
     s_advertising = false;
     s_sync_rsp_valid = false;
@@ -587,6 +602,8 @@ esp_err_t ble_tracker_stop_advertising(void)
     s_stack_running = false;
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_notify_enabled = false;
+    s_motion_subscribed = false;
+    s_stream_requested = true;
     s_frame_pending = false;
     sensor_stream_set_enabled(false);
     return ESP_OK;
@@ -616,4 +633,23 @@ bool ble_tracker_is_advertising(void)
 bool ble_tracker_is_connected(void)
 {
     return s_conn_handle != BLE_HS_CONN_HANDLE_NONE;
+}
+
+esp_err_t ble_tracker_toggle_streaming(bool *out_enabled)
+{
+    ESP_RETURN_ON_FALSE(s_conn_handle != BLE_HS_CONN_HANDLE_NONE,
+                        ESP_ERR_INVALID_STATE, TAG, "not connected");
+    s_stream_requested = !s_stream_requested;
+    apply_stream_state();
+    if (out_enabled) {
+        *out_enabled = s_stream_requested;
+    }
+    ESP_LOGI(TAG, "button stream %s",
+             s_stream_requested ? "enabled" : "paused");
+    return ESP_OK;
+}
+
+bool ble_tracker_is_streaming(void)
+{
+    return s_notify_enabled;
 }

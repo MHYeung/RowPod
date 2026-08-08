@@ -23,12 +23,29 @@ static void idle_timer_cb(TimerHandle_t timer)
     xTaskNotifyGive(s_power_task);
 }
 
-static void wait_button_release(void)
+static bool wait_for_wake_hold(void)
 {
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t required = pdMS_TO_TICKS(BOARD_BUTTON_LONG_PRESS_MS);
+
+    if (gpio_get_level(BOARD_BUTTON_GPIO) != 0) {
+        return false;
+    }
+    while (gpio_get_level(BOARD_BUTTON_GPIO) == 0) {
+        if ((xTaskGetTickCount() - start) >= required) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if ((xTaskGetTickCount() - start) < required) {
+        vTaskDelay(pdMS_TO_TICKS(30));
+        return false;
+    }
     while (gpio_get_level(BOARD_BUTTON_GPIO) == 0) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     vTaskDelay(pdMS_TO_TICKS(30));
+    return true;
 }
 
 static esp_err_t configure_button_wakeup(void)
@@ -72,9 +89,13 @@ static void power_task(void *arg)
             ESP_ERROR_CHECK(ble_tracker_start_advertising());
             continue;
         }
-        /* Wake press is consumed here; gestures stay off until advertising. */
-        wait_button_release();
-        ESP_LOGI(TAG, "button wake; restarting BLE");
+        /* GPIO wakes on the edge; only a complete 2 s hold resumes BLE. */
+        if (!wait_for_wake_hold()) {
+            ESP_LOGI(TAG, "short button wake ignored; returning to sleep");
+            xTaskNotifyGive(s_power_task);
+            continue;
+        }
+        ESP_LOGI(TAG, "two-second button wake; restarting BLE");
         ESP_ERROR_CHECK(ble_tracker_start_advertising());
     }
 }
@@ -106,8 +127,8 @@ esp_err_t power_init(void)
 void power_on_ble_link(bool connected)
 {
     s_connected = connected;
-    /* Long-press mode toggle is advertising-only. */
-    ui_set_gestures_enabled(!connected);
+    /* Awake gestures are handled by UI; mode/log actions filter by link state. */
+    ui_set_gestures_enabled(true);
     if (!s_idle_timer) {
         ESP_LOGW(TAG, "BLE state before power init");
         return;

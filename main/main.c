@@ -12,21 +12,26 @@
 
 static const char *TAG = "main";
 
-static void on_long_press(void)
+static void on_button_event(ui_button_event_t event)
 {
-    device_mode_t mode = DEVICE_MODE_SINGLE;
-    if (device_config_toggle_mode(&mode) != ESP_OK) {
-        ESP_LOGW(TAG, "mode toggle failed");
+    if (event == UI_BUTTON_SINGLE_TAP) {
+        if (!ble_tracker_is_connected()) {
+            ESP_LOGI(TAG, "single tap ignored while not connected");
+            return;
+        }
+        bool enabled = false;
+        esp_err_t ret = ble_tracker_toggle_streaming(&enabled);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "stream toggle failed: %s", esp_err_to_name(ret));
+            return;
+        }
+        ESP_LOGI(TAG, "single tap: logging stream %s",
+                 enabled ? "started" : "stopped");
         return;
     }
-    power_notify_activity();
-    (void)ui_flash_mode_ack();
-    esp_err_t ret = ble_tracker_refresh_advertising();
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "advertising refresh: %s", esp_err_to_name(ret));
-    }
-    ESP_LOGI(TAG, "mode is now %s",
-             mode == DEVICE_MODE_MULTI ? "multi-pod" : "single-pod");
+
+    /* Light-sleep wake qualification is owned by power.c; no awake action. */
+    ESP_LOGI(TAG, "long press handled as sleep-wake gesture");
 }
 
 void app_main(void)
@@ -41,7 +46,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(device_config_init());
     ESP_ERROR_CHECK(ui_init());
-    ESP_ERROR_CHECK(ui_set_long_press_cb(on_long_press));
+    ESP_ERROR_CHECK(ui_set_button_event_cb(on_button_event));
     ESP_ERROR_CHECK(battery_init());
     ESP_ERROR_CHECK(power_init());
     ESP_ERROR_CHECK(sensor_stream_init());
@@ -50,5 +55,6 @@ void app_main(void)
 
     char name[DEVICE_CONFIG_NAME_MAX + 1] = {0};
     (void)device_config_get_adv_name(name, sizeof(name));
-    ESP_LOGI(TAG, "ready as \"%s\" — long-press to toggle single/multi", name);
+    ESP_LOGI(TAG, "ready as \"%s\" — host selects multiple pods; single-tap stream",
+             name);
 }

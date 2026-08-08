@@ -7,7 +7,12 @@
 extern "C" {
 #endif
 
-/** @brief Initialize the three-minute BLE idle light-sleep policy. */
+/**
+ * @brief Initialize the three-minute BLE idle light-sleep policy.
+ *
+ * GPIO wake is qualified as a continuous two-second button hold before BLE
+ * advertising resumes.
+ */
 esp_err_t power_init(void);
 
 /** @brief Report BLE link state from the NimBLE GAP callback. */

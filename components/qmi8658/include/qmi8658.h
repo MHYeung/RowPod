@@ -18,13 +18,13 @@ typedef struct {
 
 typedef struct {
     uint16_t accel_lsb_per_g;   /**< e.g. 4096 for ±8 g */
-    uint16_t gyro_lsb_per_dps;  /**< e.g. 64 for ±512 dps */
+    uint16_t gyro_lsb_per_dps;  /**< 32 for the hand-turn ±1024 dps profile */
     uint8_t accel_fs_code;
     uint8_t gyro_fs_code;
 } qmi8658_scale_t;
 
 /**
- * @brief Probe WHO_AM_I, soft-reset, enable accel+gyro at known full-scale.
+ * @brief Probe WHO_AM_I, soft-reset, enable accel+gyro and DRDY on INT2.
  *
  * Must be called from the task that owns the I2C bus.
  */

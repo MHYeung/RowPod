@@ -1,7 +1,10 @@
 #include "sensor_stream.h"
 
+#include "board_pins.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -10,6 +13,11 @@
 #include "qmi8658.h"
 
 static const char *TAG = "sensor_stream";
+
+enum {
+    TASK_NOTIFY_DRDY = 1u << 0,
+    TASK_NOTIFY_CONTROL = 1u << 1,
+};
 
 static TaskHandle_t s_task;
 static QueueHandle_t s_latest_q;
@@ -21,16 +29,52 @@ static sensor_stream_frame_cb_t s_cb;
 static void *s_cb_ctx;
 static sensor_proto_meta_t s_meta;
 static uint16_t s_seq;
+static uint64_t s_next_emit_us;
 
 static bool rate_allowed(uint8_t hz)
 {
     return hz == 50 || hz == 100 || hz == 150;
 }
 
+static void IRAM_ATTR imu_drdy_isr(void *arg)
+{
+    TaskHandle_t task = (TaskHandle_t)arg;
+    if (!s_enabled || !task) {
+        return;
+    }
+    BaseType_t higher_priority_woken = pdFALSE;
+    xTaskNotifyFromISR(task, TASK_NOTIFY_DRDY, eSetBits,
+                       &higher_priority_woken);
+    if (higher_priority_woken == pdTRUE) {
+        portYIELD_FROM_ISR();
+    }
+}
+
+static esp_err_t init_drdy_gpio(void)
+{
+    gpio_config_t cfg = {
+        .pin_bit_mask = 1ULL << BOARD_IMU_INT2_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_POSEDGE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&cfg), TAG, "IMU DRDY GPIO%d",
+                        BOARD_IMU_INT2_GPIO);
+
+    esp_err_t ret = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        return ret;
+    }
+    if (ret == ESP_ERR_INVALID_STATE) {
+        ESP_LOGI(TAG, "GPIO ISR service already installed");
+    }
+    return ESP_OK;
+}
+
 static void stream_task(void *arg)
 {
     (void)arg;
-    TickType_t last = xTaskGetTickCount();
     uint8_t applied = s_rate_hz;
 
     for (;;) {
@@ -43,14 +87,34 @@ static void stream_task(void *arg)
                 ESP_LOGW(TAG, "ODR update failed; keeping %u Hz period", applied);
             }
             s_rate_dirty = false;
-            last = xTaskGetTickCount();
+            s_next_emit_us = 0;
         }
 
         if (!s_enabled) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            last = xTaskGetTickCount();
+            uint32_t notification = 0;
+            (void)xTaskNotifyWait(0, UINT32_MAX, &notification,
+                                  portMAX_DELAY);
             continue;
         }
+
+        /* GPIO INT2 DRDY is the only sampling clock; no fixed-rate polling. */
+        uint32_t notification = 0;
+        if (xTaskNotifyWait(0, UINT32_MAX, &notification, portMAX_DELAY) !=
+                pdTRUE ||
+            (notification & TASK_NOTIFY_DRDY) == 0) {
+            continue;
+        }
+        uint64_t now_us = (uint64_t)esp_timer_get_time();
+        uint32_t period_us = 1000000U / (applied ? applied : 50U);
+        if (s_next_emit_us != 0 && now_us < s_next_emit_us) {
+            continue;
+        }
+        if (s_next_emit_us == 0) {
+            s_next_emit_us = now_us;
+        }
+        do {
+            s_next_emit_us += period_us;
+        } while (s_next_emit_us <= now_us);
 
         qmi8658_raw_t imu = {0};
         qmc5883p_raw_t mag = {0};
@@ -84,16 +148,12 @@ static void stream_task(void *arg)
             s_dropped++;
         }
 
-        TickType_t period = pdMS_TO_TICKS(1000 / (applied ? applied : 50));
-        if (period < 1) {
-            period = 1;
-        }
-        vTaskDelayUntil(&last, period);
     }
 }
 
 esp_err_t sensor_stream_init(void)
 {
+    ESP_RETURN_ON_ERROR(init_drdy_gpio(), TAG, "DRDY GPIO");
     ESP_RETURN_ON_ERROR(i2c_bus_init(), TAG, "i2c");
     ESP_RETURN_ON_ERROR(qmi8658_init(), TAG, "imu");
     ESP_RETURN_ON_ERROR(qmc5883p_init(), TAG, "mag");
@@ -123,6 +183,9 @@ esp_err_t sensor_stream_init(void)
     BaseType_t ok =
         xTaskCreate(stream_task, "sensor_stream", 4096, NULL, 5, &s_task);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "task");
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(BOARD_IMU_INT2_GPIO,
+                                             imu_drdy_isr, s_task),
+                        TAG, "DRDY ISR");
     ESP_LOGI(TAG, "ready @ %u Hz live (paused until enable)",
              SENSOR_PROTO_RATE_LIVE_HZ);
     return ESP_OK;
@@ -131,6 +194,9 @@ esp_err_t sensor_stream_init(void)
 void sensor_stream_set_enabled(bool enabled)
 {
     s_enabled = enabled;
+    if (s_task) {
+        xTaskNotify(s_task, TASK_NOTIFY_CONTROL, eSetBits);
+    }
     ESP_LOGI(TAG, "stream %s", enabled ? "ON" : "OFF");
 }
 
@@ -147,6 +213,9 @@ esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz)
     s_rate_hz = rate_hz;
     s_meta.rate_hz = rate_hz;
     s_rate_dirty = true;
+    if (s_task) {
+        xTaskNotify(s_task, TASK_NOTIFY_CONTROL, eSetBits);
+    }
     ESP_LOGI(TAG, "rate request %u Hz", rate_hz);
     return ESP_OK;
 }

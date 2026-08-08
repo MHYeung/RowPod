@@ -20,25 +20,29 @@ typedef enum {
 /** @brief Queue a status state change; safe from BLE callbacks. */
 esp_err_t ui_set_state(ui_state_t state);
 
-typedef void (*ui_long_press_cb_t)(void);
+typedef enum {
+    UI_BUTTON_SINGLE_TAP,
+    UI_BUTTON_LONG_PRESS,
+} ui_button_event_t;
+
+typedef void (*ui_button_event_cb_t)(ui_button_event_t event);
 
 /**
- * @brief Register a callback for a ~2 s button hold while advertising.
+ * @brief Register callbacks for debounced button gestures.
  *
- * The light-sleep wake hold is ignored; call ui_arm_gestures() after wake.
+ * Single-tap is available while connected for the BLE stream/log toggle. A
+ * long press is reported while awake; light-sleep wake qualification is owned
+ * by the power component.
  */
-esp_err_t ui_set_long_press_cb(ui_long_press_cb_t cb);
+esp_err_t ui_set_button_event_cb(ui_button_event_cb_t cb);
 
 /**
  * @brief Enable or disable gesture recognition.
  *
- * Pass true only while awake and advertising. Wake-from-sleep must leave
- * gestures disarmed until the wake press is released.
+ * Pass true while awake. Wake-from-sleep must leave gestures disarmed until
+ * the wake press is released.
  */
 void ui_set_gestures_enabled(bool enabled);
-
-/** @brief Flash both LEDs briefly to confirm a mode change. */
-esp_err_t ui_flash_mode_ack(void);
 
 #ifdef __cplusplus
 }

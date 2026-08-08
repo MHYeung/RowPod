@@ -38,11 +38,14 @@ python -m http.server 8080
 
 Open `http://localhost:8080/?v=7`, click **Add pod**, select a tracker.
 
-## Single / multi-pod modes
+## Pod identity and host selection
 
-- Long-press GPIO10 for ~2 s while advertising toggles Single ↔ Multi.
-- Single default name: `C3-Tracker`.
-- Multi default name: `C3-T-XXXX` (stable pod id from NVS/MAC).
+- Every firmware pod is permanently a single-node BLE peripheral.
+- The default advertised name is unique: `C3-T-XXXX` (stable pod id from NVS/MAC).
+- The dashboard host selects one or multiple pods by using **Add pod** for each
+  device; no device-side mode switch is required.
+- Hold GPIO10 for ~2 s in light sleep to wake; a shorter wake press is ignored.
+- In a connected pod, single-tap pauses/resumes the BLE sensor stream.
 - Dashboard rename writes the position name into the pod NVS and becomes the
   BLE advertised name (max 20 chars). Motion service UUIDs stay fixed.
 - Software clock sync estimates millisecond-scale offsets for overlay/CSV; it
@@ -57,14 +60,14 @@ Open `http://localhost:8080/?v=7`, click **Add pod**, select a tracker.
 ├── main/                 Orchestration only (app_main)
 ├── components/
 │   ├── board/            Pin / address map
-│   ├── device_config/    NVS mode, name, pod id
+│   ├── device_config/    NVS name, pod id, fixed single-node identity
 │   ├── i2c_bus/          Single I2C master owner
 │   ├── qmi8658/          IMU driver
 │   ├── qmc5883p/         Magnetometer driver
 │   ├── sensor_protocol/  BLE wire frame + UUIDs
-│   ├── sensor_stream/    50 Hz live / 100–150 Hz log sampling task
+│   ├── sensor_stream/    DRDY-clocked 50 Hz live / 100–150 Hz log stream
 │   ├── ble_tracker/      NimBLE motion + config peripheral
-│   ├── ui/               Status LEDs + long-press
+│   ├── ui/               Status LEDs + button gestures
 │   ├── battery/          ADC oneshot on GPIO2 → pack mV / %
 │   └── power/            Three-minute light-sleep policy
 └── web/ble_plotter/      Local Web Bluetooth UI
@@ -79,5 +82,7 @@ Open `http://localhost:8080/?v=7`, click **Add pod**, select a tracker.
 ## Logging
 
 Use `ESP_LOGI` / `ESP_LOGW` / `ESP_LOGE` — never `printf`.
+The single-tap action controls BLE streaming; CSV capture remains in the
+browser dashboard and is not stored in pod flash.
 
 See [BRINGUP.md](BRINGUP.md) for staged hardware bring-up notes.

@@ -14,8 +14,9 @@ typedef void (*sensor_stream_frame_cb_t)(const sensor_proto_frame_t *frame, void
 /**
  * @brief Init I2C + sensors and start the sampling task (paused until enable).
  *
- * Default rate is SENSOR_PROTO_RATE_LIVE_HZ. Sampling runs only while enabled
- * (typically when a peer has motion CCCD notify on).
+ * Default rate is SENSOR_PROTO_RATE_LIVE_HZ. Samples are clocked from the
+ * QMI8658 INT2 DRDY GPIO and emitted only while enabled (typically when a
+ * peer has motion CCCD notify on).
  */
 esp_err_t sensor_stream_init(void);
 
@@ -28,14 +29,14 @@ bool sensor_stream_is_enabled(void);
  * @brief Change host sample rate (50, 100, or 150 Hz).
  *
  * Updates meta.rate_hz and IMU ODR. Safe to call from BLE callbacks; the
- * sensor task applies the period on its next wake.
+ * sensor task applies the profile on the next DRDY event.
  */
 esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz);
 
 uint8_t sensor_stream_get_rate_hz(void);
 
 /**
- * @brief Register callback invoked from the sensor task after each successful sample.
+ * @brief Register callback invoked after each DRDY-qualified sample.
  * Keep the callback short — queue/notify only; no I2C or blocking BLE.
  */
 void sensor_stream_set_frame_cb(sensor_stream_frame_cb_t cb, void *ctx);

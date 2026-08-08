@@ -11,9 +11,8 @@
 
 static const char *TAG = "ui";
 static QueueHandle_t s_state_q;
-static ui_long_press_cb_t s_long_press_cb;
+static ui_button_event_cb_t s_button_event_cb;
 static volatile bool s_gestures_enabled;
-static volatile bool s_flash_ack;
 
 enum {
     BREATH_STEPS = 64,
@@ -22,8 +21,6 @@ enum {
     /* Waiting breath peak ~25%; connected link lamp ~5% blue only. */
     LED_STATUS_DUTY_MAX = LEDC_DUTY_MAX / 4,
     LED_LINK_DUTY = LEDC_DUTY_MAX / 20,
-    LONG_PRESS_MS = 2000,
-    DEBOUNCE_MS = 30,
     BTN_POLL_MS = 20,
 };
 
@@ -52,60 +49,60 @@ static void apply_state(ui_state_t state)
     }
 }
 
-static void run_flash_ack(void)
+static void emit_button_event(ui_button_event_t event)
 {
-    for (int i = 0; i < 2; i++) {
-        set_led_duty(LEDC_CHANNEL_0, LED_STATUS_DUTY_MAX);
-        set_led_duty(LEDC_CHANNEL_1, LED_STATUS_DUTY_MAX);
-        vTaskDelay(pdMS_TO_TICKS(80));
-        set_led_duty(LEDC_CHANNEL_0, 0);
-        set_led_duty(LEDC_CHANNEL_1, 0);
-        vTaskDelay(pdMS_TO_TICKS(80));
+    if (s_button_event_cb) {
+        s_button_event_cb(event);
     }
 }
 
 static void poll_button(ui_state_t state)
 {
     static bool pressed;
-    static bool fired;
+    static bool long_fired;
     static TickType_t press_start;
     static TickType_t stable_since;
     static int last_level = 1;
+    const bool active = s_gestures_enabled && state != UI_STATE_SLEEP;
+    const TickType_t now = xTaskGetTickCount();
+    const TickType_t debounce = pdMS_TO_TICKS(BOARD_BUTTON_DEBOUNCE_MS);
+    const TickType_t long_press = pdMS_TO_TICKS(BOARD_BUTTON_LONG_PRESS_MS);
 
-    if (!s_gestures_enabled || state != UI_STATE_WAITING) {
+    if (!active) {
         pressed = false;
-        fired = false;
+        long_fired = false;
         last_level = gpio_get_level(BOARD_BUTTON_GPIO);
+        stable_since = now;
         return;
     }
 
     int level = gpio_get_level(BOARD_BUTTON_GPIO);
-    TickType_t now = xTaskGetTickCount();
     if (level != last_level) {
         last_level = level;
         stable_since = now;
         return;
     }
-    if ((now - stable_since) < pdMS_TO_TICKS(DEBOUNCE_MS)) {
+    if ((now - stable_since) < debounce) {
         return;
     }
 
     if (level == 0) {
         if (!pressed) {
             pressed = true;
-            fired = false;
+            long_fired = false;
             press_start = now;
-        } else if (!fired &&
-                   (now - press_start) >= pdMS_TO_TICKS(LONG_PRESS_MS)) {
-            fired = true;
+        } else if (!long_fired && (now - press_start) >= long_press) {
+            long_fired = true;
             ESP_LOGI(TAG, "long press");
-            if (s_long_press_cb) {
-                s_long_press_cb();
-            }
+            emit_button_event(UI_BUTTON_LONG_PRESS);
         }
-    } else {
+    } else if (pressed) {
         pressed = false;
-        fired = false;
+        if (!long_fired) {
+            ESP_LOGI(TAG, "single tap");
+            emit_button_event(UI_BUTTON_SINGLE_TAP);
+        }
+        long_fired = false;
     }
 }
 
@@ -120,10 +117,6 @@ static void ui_task(void *arg)
                           pdMS_TO_TICKS(BTN_POLL_MS)) == pdTRUE) {
             state = requested;
             phase = 0;
-            apply_state(state);
-        } else if (s_flash_ack) {
-            s_flash_ack = false;
-            run_flash_ack();
             apply_state(state);
         } else if (state == UI_STATE_WAITING) {
             set_led_duty(LEDC_CHANNEL_0, breath_duty(phase++ % BREATH_STEPS));
@@ -187,19 +180,13 @@ esp_err_t ui_set_state(ui_state_t state)
     return ESP_OK;
 }
 
-esp_err_t ui_set_long_press_cb(ui_long_press_cb_t cb)
+esp_err_t ui_set_button_event_cb(ui_button_event_cb_t cb)
 {
-    s_long_press_cb = cb;
+    s_button_event_cb = cb;
     return ESP_OK;
 }
 
 void ui_set_gestures_enabled(bool enabled)
 {
     s_gestures_enabled = enabled;
-}
-
-esp_err_t ui_flash_mode_ack(void)
-{
-    s_flash_ack = true;
-    return ESP_OK;
 }

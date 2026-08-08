@@ -13,6 +13,9 @@
 #define BOARD_BATTERY_ADC_GPIO      2
 /** Pack voltage = ADC pin voltage × ratio. 1:1 divider → 2. */
 #define BOARD_BATTERY_DIVIDER_RATIO 2
+/** Button gesture timing. */
+#define BOARD_BUTTON_LONG_PRESS_MS      2000
+#define BOARD_BUTTON_DEBOUNCE_MS           30
 
 #define BOARD_I2C_SDA_GPIO          4
 #define BOARD_I2C_SCL_GPIO          5

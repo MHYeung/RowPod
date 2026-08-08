@@ -28,30 +28,31 @@ QMI8658A @ `0x6A` (WHO_AM_I `0x05`), QMC5883P @ `0x2C` (CHIPID `0x80`).
 | State | Green | Blue |
 |-------|-------|------|
 | Advertising / waiting | Off | LEDC breathing, 2 s period |
-| Connected | 25% PWM | Off |
-| Streaming notifications | 25% PWM | 25% PWM |
-| Mode-change ack | brief dual flash | brief dual flash |
+| Connected | Off | Dim blue |
+| Streaming notifications | Off | Dim blue |
 | Light sleep | Off | Off |
 
 ## Application flow (current)
 
-1. `device_config_init` — load mode / name / pod id from NVS
-2. `ui_init` — LEDs + long-press gesture task
-3. `sensor_stream_init` — I²C bus, IMU/mag init, paused 100 Hz task
+1. `device_config_init` — load name / pod id from NVS
+2. `ui_init` — LEDs + debounced button gesture task
+3. `sensor_stream_init` — I²C bus, IMU/mag init, INT2 DRDY task
 4. `ble_tracker_init` — NimBLE advertise motion + config services
 5. Client enables notifications on motion data → streaming starts
 6. Dashboard may write position name / request software sync
-7. Long-press (~2 s) while advertising toggles Single/Multi and refreshes ADV
-8. No connection for three minutes → BLE stops and light sleep waits for GPIO10
-9. Wake press is wake-only; gestures re-arm after advertising resumes
+7. Every pod advertises as a fixed single-node peripheral with a unique pod name
+8. The host may connect one or multiple pods using repeated **Add pod** actions
+9. No connection for three minutes → BLE stops and light sleep waits for GPIO10
+10. A short wake press is ignored; hold GPIO10 for 2 s, release, and advertising resumes
+11. In a connected pod, single-tap pauses/resumes the BLE sensor stream
 
 ## Multi-pod validation checklist
 
 1. Boot one pod; confirm blue breath and advertised name.
-2. Long-press while advertising; confirm dual LED flash and mode log / name change.
-3. Power-cycle; confirm mode/name persist from NVS.
-4. Enter light sleep; wake with button; confirm wake hold does **not** toggle mode.
-5. Web: Add pod → enable notify → rename → reconnect and verify new ADV name.
+2. Confirm the pod advertises with a unique `C3-T-XXXX` name.
+3. Power-cycle; confirm pod id/name persist from NVS.
+4. Enter light sleep; short-tap and confirm it remains asleep; hold 2 s and release.
+5. Web: Add pod → enable notify → single-tap and verify frames stop/resume.
 6. Two pods: overlay traces, per-pod rates/gaps, CSV includes `position`/`synced_ms`.
 7. Optional four-pod stress: watch for rising seq gaps / UI lag.
 
@@ -62,13 +63,14 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=5` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead.
+Open `http://localhost:8080/?v=7` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead.
 
 ## Known hardware notes
 
 - SCL (GPIO5 / TP5) has been intermittent; idle-high must be ~3.3 V before trusting I²C.
 - External 4.7 kΩ pull-ups required; do not rely on internal weak pull-ups alone.
-- Leave IMU INT pins for a later stage; never do I²C from an ISR.
+- IMU INT2 (GPIO3) is the DRDY input; verify it is wired and toggles at the
+  selected ODR. The ISR only notifies the sensor task; it never performs I²C.
 
 ## Documentation checkpoints
 
