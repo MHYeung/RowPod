@@ -14,19 +14,20 @@ static const char *TAG = "qmc5883p";
 #define REG_DATA_XL  0x01
 #define REG_CTRL1    0x0A
 #define REG_CTRL2    0x0B
+#define REG_XYZ_SIGN 0x29
 
-/* CTRL1: OSR2=11 OSR1=00 ODR=10 (100 Hz) MODE=01 (continuous) → 0xC9
- * CTRL2 after soft-reset: clear SOFT_RST, RNG=00 (±30 G) SET/RESET=00 → 0x00
- * Datasheet: ±30 G → 1000 LSB/G */
-#define CTRL1_VAL    0xC9
-#define CTRL2_CFG    0x00
+/* Rev-E normal-mode setup: OSR2=8, OSR1=8, ODR=200 Hz, MODE=normal.
+ * ±8 G retains ample indoor hard-iron headroom at 3750 LSB/G. */
+#define CTRL1_VAL    0xCD
+#define CTRL2_CFG    0x08
+#define XYZ_SIGN_VAL 0x06
 #define SOFT_RST     0x80
 
 static i2c_master_dev_handle_t s_dev;
 static qmc5883p_scale_t s_scale = {
-    .lsb_per_gauss = 1000,
-    .range_code = 0,
-    .odr_hz = 100,
+    .lsb_per_gauss = 3750,
+    .range_code = 2,
+    .odr_hz = 200,
 };
 static bool s_ready;
 
@@ -58,6 +59,8 @@ esp_err_t qmc5883p_init(void)
     ESP_RETURN_ON_ERROR(read_id_stable(), TAG, "id");
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL2, SOFT_RST), TAG, "soft rst");
     vTaskDelay(pdMS_TO_TICKS(10));
+    ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_XYZ_SIGN, XYZ_SIGN_VAL),
+                        TAG, "XYZ sign");
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL2, CTRL2_CFG), TAG, "CTRL2");
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL1, CTRL1_VAL), TAG, "CTRL1");
 
@@ -78,6 +81,31 @@ esp_err_t qmc5883p_read_raw(qmc5883p_raw_t *out)
     out->mx = (int16_t)((buf[1] << 8) | buf[0]);
     out->my = (int16_t)((buf[3] << 8) | buf[2]);
     out->mz = (int16_t)((buf[5] << 8) | buf[4]);
+    return ESP_OK;
+}
+
+esp_err_t qmc5883p_set_odr_for_rate(uint8_t imu_rate_hz)
+{
+    ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not ready");
+    uint8_t odr_bits;
+    uint8_t mag_hz;
+    if (imu_rate_hz == 56) {
+        odr_bits = 0x01;
+        mag_hz = 50;
+    } else if (imu_rate_hz == 112) {
+        odr_bits = 0x02;
+        mag_hz = 100;
+    } else if (imu_rate_hz == 224) {
+        odr_bits = 0x03;
+        mag_hz = 200;
+    } else {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t ctrl1 = (uint8_t)(0xC1 | (odr_bits << 2));
+    ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL1, ctrl1), TAG,
+                        "CTRL1 ODR");
+    s_scale.odr_hz = mag_hz;
+    ESP_LOGI(TAG, "ODR %u Hz for IMU profile %u Hz", mag_hz, imu_rate_hz);
     return ESP_OK;
 }
 

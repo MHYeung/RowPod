@@ -1,11 +1,12 @@
 #include "sensor_stream.h"
 
+#include <inttypes.h>
+
 #include "board_pins.h"
 #include "esp_check.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "driver/gpio.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
@@ -25,15 +26,15 @@ static volatile bool s_enabled;
 static volatile uint8_t s_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
 static volatile bool s_rate_dirty;
 static volatile uint32_t s_dropped;
+static volatile uint32_t s_drdy_count;
 static sensor_stream_frame_cb_t s_cb;
 static void *s_cb_ctx;
 static sensor_proto_meta_t s_meta;
 static uint16_t s_seq;
-static uint64_t s_next_emit_us;
 
 static bool rate_allowed(uint8_t hz)
 {
-    return hz == 50 || hz == 100 || hz == 150;
+    return hz == 56 || hz == 112 || hz == 224;
 }
 
 static void IRAM_ATTR imu_drdy_isr(void *arg)
@@ -42,6 +43,7 @@ static void IRAM_ATTR imu_drdy_isr(void *arg)
     if (!s_enabled || !task) {
         return;
     }
+    s_drdy_count++;
     BaseType_t higher_priority_woken = pdFALSE;
     xTaskNotifyFromISR(task, TASK_NOTIFY_DRDY, eSetBits,
                        &higher_priority_woken);
@@ -76,18 +78,22 @@ static void stream_task(void *arg)
 {
     (void)arg;
     uint8_t applied = s_rate_hz;
+    uint32_t last_drdy_count = 0;
 
     for (;;) {
         if (s_rate_dirty) {
             uint8_t want = s_rate_hz;
-            if (qmi8658_set_odr_for_rate(want) == ESP_OK) {
+            esp_err_t imu_err = qmi8658_set_odr_for_rate(want);
+            esp_err_t mag_err = qmc5883p_set_odr_for_rate(want);
+            if (imu_err == ESP_OK && mag_err == ESP_OK) {
                 applied = want;
                 s_meta.rate_hz = want;
             } else {
-                ESP_LOGW(TAG, "ODR update failed; keeping %u Hz period", applied);
+                ESP_LOGW(TAG, "ODR update failed IMU=%s MAG=%s; keeping %u Hz",
+                         esp_err_to_name(imu_err), esp_err_to_name(mag_err),
+                         applied);
             }
             s_rate_dirty = false;
-            s_next_emit_us = 0;
         }
 
         if (!s_enabled) {
@@ -104,18 +110,26 @@ static void stream_task(void *arg)
             (notification & TASK_NOTIFY_DRDY) == 0) {
             continue;
         }
-        uint64_t now_us = (uint64_t)esp_timer_get_time();
-        uint32_t period_us = 1000000U / (applied ? applied : 50U);
-        if (s_next_emit_us != 0 && now_us < s_next_emit_us) {
-            continue;
+        uint32_t drdy_count = s_drdy_count;
+        if (last_drdy_count != 0) {
+            uint32_t elapsed_samples = drdy_count - last_drdy_count;
+            if (elapsed_samples == 0) {
+                continue; /* A queued notification for an already-read DRDY. */
+            }
+            if (elapsed_samples > 1) {
+                uint32_t missed = elapsed_samples - 1;
+                uint32_t dropped_before = s_dropped;
+                s_seq = (uint16_t)(s_seq + missed);
+                s_dropped += missed;
+                if (dropped_before == 0 ||
+                    s_dropped / 64 != dropped_before / 64) {
+                    ESP_LOGW(TAG, "coalesced DRDY samples=%" PRIu32
+                                  " total dropped=%" PRIu32,
+                             missed, s_dropped);
+                }
+            }
         }
-        if (s_next_emit_us == 0) {
-            s_next_emit_us = now_us;
-        }
-        do {
-            s_next_emit_us += period_us;
-        } while (s_next_emit_us <= now_us);
-
+        last_drdy_count = drdy_count;
         qmi8658_raw_t imu = {0};
         qmc5883p_raw_t mag = {0};
         esp_err_t e1 = qmi8658_read_raw(&imu);
@@ -159,6 +173,8 @@ esp_err_t sensor_stream_init(void)
     ESP_RETURN_ON_ERROR(qmc5883p_init(), TAG, "mag");
     ESP_RETURN_ON_ERROR(qmi8658_set_odr_for_rate(SENSOR_PROTO_RATE_LIVE_HZ), TAG,
                         "odr");
+    ESP_RETURN_ON_ERROR(qmc5883p_set_odr_for_rate(SENSOR_PROTO_RATE_LIVE_HZ),
+                        TAG, "mag odr");
 
     qmi8658_scale_t as = {0};
     qmc5883p_scale_t ms = {0};
@@ -167,6 +183,7 @@ esp_err_t sensor_stream_init(void)
 
     s_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
     s_rate_dirty = false;
+    s_drdy_count = 0;
     s_meta = (sensor_proto_meta_t){
         .ver = SENSOR_PROTO_FORMAT_VER,
         .rate_hz = SENSOR_PROTO_RATE_LIVE_HZ,

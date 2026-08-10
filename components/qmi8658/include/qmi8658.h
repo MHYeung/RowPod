@@ -17,8 +17,8 @@ typedef struct {
 } qmi8658_raw_t;
 
 typedef struct {
-    uint16_t accel_lsb_per_g;   /**< e.g. 4096 for ±8 g */
-    uint16_t gyro_lsb_per_dps;  /**< 32 for the hand-turn ±1024 dps profile */
+    uint16_t accel_lsb_per_g;   /**< 2048 for the trajectory ±16 g profile */
+    uint16_t gyro_lsb_per_dps;  /**< 16 for the trajectory ±2048 dps profile */
     uint8_t accel_fs_code;
     uint8_t gyro_fs_code;
 } qmi8658_scale_t;
@@ -37,8 +37,9 @@ esp_err_t qmi8658_read_raw(qmi8658_raw_t *out);
 esp_err_t qmi8658_get_scale(qmi8658_scale_t *out);
 
 /**
- * @brief Select IMU ODR band for a target host sample rate (50 / 100 / 150 Hz).
+ * @brief Select an exact 6-DoF ODR (56 / 112 / 224 Hz).
  *
+ * Exact sensor-clock rates keep sequence-derived sample time uniform.
  * Must be called from the I2C-owning task (sensor_stream).
  */
 esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz);

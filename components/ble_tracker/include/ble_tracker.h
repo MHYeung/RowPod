@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -47,6 +48,14 @@ esp_err_t ble_tracker_toggle_streaming(bool *out_enabled);
 
 /** @brief Return true when a subscriber and stream request are both active. */
 bool ble_tracker_is_streaming(void);
+
+/**
+ * @brief Return the host-selected workout profile.
+ *
+ * SENSOR_PROTO_PROFILE_HYROX requests the high-rate capture policy; rep and
+ * station metrics remain host-side because the browser owns the session UI.
+ */
+uint8_t ble_tracker_get_workout_profile(void);
 
 #ifdef __cplusplus
 }

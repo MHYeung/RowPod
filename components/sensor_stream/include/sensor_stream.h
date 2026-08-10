@@ -26,10 +26,10 @@ void sensor_stream_set_enabled(bool enabled);
 bool sensor_stream_is_enabled(void);
 
 /**
- * @brief Change host sample rate (50, 100, or 150 Hz).
+ * @brief Change the sensor-native sample rate (56, 112, or 224 Hz).
  *
- * Updates meta.rate_hz and IMU ODR. Safe to call from BLE callbacks; the
- * sensor task applies the profile on the next DRDY event.
+ * No host-side decimation is used, so sequence-derived timestamps remain
+ * uniform. Safe from BLE callbacks; the I2C-owning task applies the change.
  */
 esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz);
 

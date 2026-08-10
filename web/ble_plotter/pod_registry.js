@@ -1,4 +1,5 @@
 import { BleClient } from "./ble_client.js";
+import { MotionOutlierFilter } from "./outlier_filter.js";
 import { POD_COLORS } from "./protocol.js";
 
 const STORE_KEY = "c3_pod_labels_v1";
@@ -25,6 +26,7 @@ export class PodRegistry {
     this.onStats = null;
     this.onFrame = null;
     this._colorIdx = 0;
+    this._addPromise = null;
   }
 
   list() {
@@ -47,11 +49,64 @@ export class PodRegistry {
     if (this.onStats) this.onStats(this.list(), this.selectedId);
   }
 
+  async pauseStreams() {
+    const paused = [];
+    for (const session of this.sessions.values()) {
+      if (session.status !== "connected") continue;
+      try {
+        if (await session.client.pauseNotifications()) paused.push(session);
+      } catch (error) {
+        console.warn("pause stream failed", session.position, error);
+      }
+    }
+    return paused;
+  }
+
+  async resumeStreams(sessions) {
+    for (const session of sessions || []) {
+      if (session.status !== "connected") continue;
+      try {
+        await session.client.resumeNotifications();
+      } catch (error) {
+        console.warn("resume stream failed", session.position, error);
+      }
+    }
+  }
+
   async addPod() {
+    if (this._addPromise) return this._addPromise;
+    this._addPromise = this._addPod();
+    try {
+      return await this._addPromise;
+    } finally {
+      this._addPromise = null;
+    }
+  }
+
+  async _addPod() {
     const client = new BleClient();
-    await client.connect();
+    let pausedSessions = [];
+    try {
+      await client.connect({
+        beforeGattConnect: async () => {
+          pausedSessions = await this.pauseStreams();
+        },
+      });
+      await this.resumeStreams(pausedSessions);
+    } catch (error) {
+      await this.resumeStreams(pausedSessions);
+      try {
+        await client.disconnect();
+      } catch (_) {
+        /* The failed setup has already cleaned its GATT handle. */
+      }
+      throw error;
+    }
     const id = client.deviceId;
-    if (!id) throw new Error("device id missing");
+    if (!id) {
+      await client.disconnect();
+      throw new Error("device id missing");
+    }
     if (this.sessions.has(id)) {
       await client.disconnect();
       throw new Error("pod already connected");
@@ -69,17 +124,41 @@ export class PodRegistry {
       gaps: 0,
       rate: 0,
       frames: 0,
+      totalFrames: 0,
       windowStart: performance.now(),
       sync: { offsetMs: 0, rttMs: 0, ok: false },
       battery: { ...client.battery },
       mode: client.info.mode,
       podId: client.info.podId,
+      sensorStatus: "waiting",
+      lastFrameAt: performance.now(),
+      outliers: 0,
+      history: [],
+      outlierFilter: new MotionOutlierFilter(),
     };
 
     client.onFrame = (frame, gaps) => {
       session.gaps = gaps;
       session.frames += 1;
       const now = performance.now();
+      session.lastFrameAt = now;
+      session.sensorStatus = "streaming";
+      session.totalFrames += 1;
+      const quality = session.outlierFilter.observe(frame);
+      if (quality.mask) session.outliers += 1;
+      const e = quality.eng;
+      session.activity = Math.min(
+        1.5,
+        (Math.hypot(e.gx, e.gy, e.gz) / 180 +
+          Math.abs(Math.hypot(e.ax, e.ay, e.az) - 1) / 0.6) / 2
+      );
+      session.history.push({
+        t: now,
+        activity: session.activity,
+        gyro: Math.hypot(e.gx, e.gy, e.gz),
+        accel: Math.hypot(e.ax, e.ay, e.az),
+      });
+      if (session.history.length > 96) session.history.shift();
       if (now - session.windowStart >= 1000) {
         session.rate = session.frames;
         session.frames = 0;
@@ -87,10 +166,11 @@ export class PodRegistry {
         this._emitStats();
       }
       const syncedMs = now + (session.sync.offsetMs || 0);
-      if (this.onFrame) this.onFrame(session, frame, syncedMs);
+      if (this.onFrame) this.onFrame(session, frame, syncedMs, quality);
     };
     client.onDisconnect = () => {
       session.status = "lost";
+      session.sensorStatus = "lost";
       this._emit();
     };
 
@@ -160,7 +240,7 @@ export class PodRegistry {
     this._emitStats();
   }
 
-  /** @param {50|100|150} hz */
+  /** @param {56|112|224} hz */
   async setRateAll(hz) {
     for (const s of this.sessions.values()) {
       if (s.status !== "connected") continue;
@@ -168,6 +248,19 @@ export class PodRegistry {
         await s.client.setRate(hz);
       } catch (e) {
         console.warn("setRate failed", s.position, e);
+      }
+    }
+    this._emitStats();
+  }
+
+  /** @param {0|1} profile */
+  async setWorkoutProfileAll(profile) {
+    for (const s of this.sessions.values()) {
+      if (s.status !== "connected") continue;
+      try {
+        await s.client.setWorkoutProfile(profile);
+      } catch (e) {
+        console.warn("set workout profile failed", s.position, e);
       }
     }
     this._emitStats();

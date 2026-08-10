@@ -27,5 +27,6 @@
 /** QMC5883P default 7-bit address */
 #define BOARD_QMC5883P_ADDR         0x2C
 
-#define BOARD_I2C_FREQ_HZ           100000
+/** Both sensors support I2C Fast-mode; required for 224 Hz fusion capture. */
+#define BOARD_I2C_FREQ_HZ           400000
 #define BOARD_DEVICE_NAME           "C3-Tracker"

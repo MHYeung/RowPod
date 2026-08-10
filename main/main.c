@@ -55,6 +55,6 @@ void app_main(void)
 
     char name[DEVICE_CONFIG_NAME_MAX + 1] = {0};
     (void)device_config_get_adv_name(name, sizeof(name));
-    ESP_LOGI(TAG, "ready as \"%s\" — host selects multiple pods; single-tap stream",
-             name);
+    ESP_LOGI(TAG, "ready as \"%s\" — host selects multiple pods; profile=%u",
+             name, ble_tracker_get_workout_profile());
 }

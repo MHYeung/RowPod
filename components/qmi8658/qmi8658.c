@@ -20,22 +20,23 @@ static const char *TAG = "qmi8658";
 #define REG_AX_L     0x35
 
 /* CTRL1: ADDR_AI (bit6) + INT2_EN (bit4); BE=0 → little-endian → 0x50
- * CTRL2: aFS=010 (±8g) | aODR=0110 → 0x26
- * CTRL3: gFS=110 (±1024 dps) | gODR=0110 → 0x66
+ * CTRL2: aFS=011 (±16g) | aODR=0110 → 0x36
+ * CTRL3: gFS=111 (±2048 dps) | gODR=0110 → 0x76
  * In 6-DoF mode, ODR code 0x6 is approximately 112 Hz.
- * Scales: ±8 g → 4096 LSB/g; ±1024 dps → 32 LSB/dps. */
+ * Wide ranges avoid clipping during fast arm strokes. */
 #define CTRL1_VAL    0x50
-#define CTRL2_VAL    0x26
-#define CTRL3_VAL    0x66
+#define CTRL2_VAL    0x36
+#define CTRL3_VAL    0x76
 /* CTRL7: DRDY_DIS=0 routes data-ready pulses to INT2; gEN=1, aEN=1. */
 #define CTRL7_VAL    0x03
-#define GYRO_FS_CODE 6
+#define ACCEL_FS_CODE 3
+#define GYRO_FS_CODE  7
 
 static i2c_master_dev_handle_t s_dev;
 static qmi8658_scale_t s_scale = {
-    .accel_lsb_per_g = 4096,
-    .gyro_lsb_per_dps = 32,
-    .accel_fs_code = 2,
+    .accel_lsb_per_g = 2048,
+    .gyro_lsb_per_dps = 16,
+    .accel_fs_code = ACCEL_FS_CODE,
     .gyro_fs_code = GYRO_FS_CODE,
 };
 static bool s_ready;
@@ -101,21 +102,23 @@ esp_err_t qmi8658_read_raw(qmi8658_raw_t *out)
 esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz)
 {
     ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not ready");
-    /* CTRL2/3 low nibble = ODR. Keep ±8 g and ±1024 dps full scales. */
+    /* Use sensor-native rates so seq / rate is an exact, uniform timebase. */
     uint8_t odr;
-    if (rate_hz <= 50) {
-        odr = 0x07; /* ~56 Hz */
-    } else if (rate_hz <= 100) {
-        odr = 0x06; /* ~112 Hz */
+    if (rate_hz == 56) {
+        odr = 0x07;
+    } else if (rate_hz == 112) {
+        odr = 0x06;
+    } else if (rate_hz == 224) {
+        odr = 0x05;
     } else {
-        odr = 0x05; /* ~224 Hz — host may pull at 150 Hz */
+        return ESP_ERR_INVALID_ARG;
     }
-    uint8_t ctrl2 = (uint8_t)((0x02 << 4) | odr);
+    uint8_t ctrl2 = (uint8_t)((ACCEL_FS_CODE << 4) | odr);
     uint8_t ctrl3 = (uint8_t)((GYRO_FS_CODE << 4) | odr);
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL2, ctrl2), TAG, "CTRL2");
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL3, ctrl3), TAG, "CTRL3");
-    ESP_LOGI(TAG, "ODR band for %u Hz → CTRL2=0x%02X CTRL3=0x%02X", rate_hz, ctrl2,
-             ctrl3);
+    ESP_LOGI(TAG, "trajectory profile %u Hz CTRL2=0x%02X CTRL3=0x%02X",
+             rate_hz, ctrl2, ctrl3);
     return ESP_OK;
 }
 

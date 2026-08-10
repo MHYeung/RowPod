@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>C3-Tracker Web BLE</title>
-  <link rel="stylesheet" href="styles.css?v=7" />
+  <link rel="stylesheet" href="styles.css?v=12" />
 </head>
 <body>
   <header>
     <h1>C3-Tracker</h1>
-    <p class="sub">Single-pod logging and multi-pod overlay motion network · dashboard v7</p>
+    <p class="sub">Fusion-grade capture, pod fleet summary, and HYROX training · dashboard v12</p>
   </header>
 
   <section class="controls">
@@ -18,22 +18,34 @@
     <span id="status" class="status">No pods connected</span>
   </section>
 
-  <section class="pods" id="podList" aria-label="Connected pods"></section>
-
-  <section class="stats">
-    <div>Pods: <strong id="podCount">0</strong></div>
-    <div>Selected rate: <strong id="rate">—</strong> Hz</div>
-    <div>Selected gaps: <strong id="gaps">0</strong></div>
-    <div>Meta: <strong id="meta">—</strong></div>
-  </section>
-
   <nav class="tabs" role="tablist">
-    <button type="button" class="tab active" data-tab="plots" role="tab" aria-selected="true">Plots</button>
+    <button type="button" class="tab active" data-tab="summary" role="tab" aria-selected="true">Summary</button>
+    <button type="button" class="tab" data-tab="plots" role="tab" aria-selected="false">Plots</button>
     <button type="button" class="tab" data-tab="orientation" role="tab" aria-selected="false">Orientation</button>
+    <button type="button" class="tab" data-tab="hyrox" role="tab" aria-selected="false">HYROX</button>
     <button type="button" class="tab" data-tab="logging" role="tab" aria-selected="false">CSV log</button>
   </nav>
 
-  <section id="panel-plots" class="tab-panel active" role="tabpanel">
+  <section id="panel-summary" class="tab-panel active" role="tabpanel">
+    <p class="hint">
+      Fleet view: battery, stream health, sample rate, gaps, and a short activity
+      trace for every connected pod. Select a card to drive the detailed views.
+    </p>
+    <section class="summary-kpis">
+      <div>Pods: <strong id="podCount">0</strong></div>
+      <div>Healthy sensors: <strong id="healthyCount">0</strong></div>
+      <div>Mean rate: <strong id="fleetRate">—</strong> Hz</div>
+      <div>Mean battery: <strong id="fleetBattery">—</strong></div>
+    </section>
+    <section class="pods" id="podList" aria-label="Connected pods"></section>
+    <section class="stats">
+      <div>Selected rate: <strong id="rate">—</strong> Hz</div>
+      <div>Selected gaps: <strong id="gaps">0</strong></div>
+      <div>Meta: <strong id="meta">—</strong></div>
+    </section>
+  </section>
+
+  <section id="panel-plots" class="tab-panel" role="tabpanel" hidden>
     <p class="hint">
       Overlay compares the same channels across pods. Each pod color marks its traces.
       Software sync estimates clock offset for CSV timestamps; it is not sample-level IMU sync.
@@ -66,20 +78,58 @@
     </figure>
   </section>
 
+  <section id="panel-hyrox" class="tab-panel" role="tabpanel" hidden>
+    <p class="hint">
+      HYROX mode is a training assistant: it estimates work/rest, motion
+      intensity, and candidate repetitions from IMU motion. It does not claim
+      exact running distance or official race timing.
+    </p>
+    <section class="hyrox-controls">
+      <label>
+        Station
+        <select id="hyroxStation">
+          <option value="run">Run</option>
+          <option value="ski">SkiErg</option>
+          <option value="sled_push">Sled push</option>
+          <option value="sled_pull">Sled pull</option>
+          <option value="burpee">Burpee broad jump</option>
+          <option value="row">Row</option>
+          <option value="carry">Farmers carry</option>
+          <option value="lunge">Sandbag lunges</option>
+          <option value="wall_ball">Wall balls</option>
+        </select>
+      </label>
+      <button id="btnHyroxStart" type="button" disabled>Start HYROX set</button>
+      <button id="btnHyroxStop" type="button" disabled>Stop set</button>
+      <span id="hyroxState" class="status">Idle</span>
+    </section>
+    <section class="hyrox-kpis">
+      <div>Elapsed: <strong id="hyroxElapsed">0:00</strong></div>
+      <div>Reps: <strong id="hyroxReps">0</strong></div>
+      <div>Cadence: <strong id="hyroxCadence">—</strong></div>
+      <div>Effort: <strong id="hyroxEffort">—</strong></div>
+      <div>Work: <strong id="hyroxWork">0 s</strong></div>
+    </section>
+    <p id="hyroxQuality" class="hint">Connect a pod and choose a station.</p>
+  </section>
+
   <section id="panel-logging" class="tab-panel" role="tabpanel" hidden>
     <p class="hint">
-      Live monitor stays at 50 Hz. Start raises pods to 150 Hz (1 pod) or 100 Hz (multi-pod).
-      CSV is a ring buffer (newest keeps; oldest drops) with a v2 comment header.
+      Calibrate the magnetometer in the assembled enclosure first: slow figure-8 and
+      tumble through nose/tail/side-down (not flat table spins). Logging uses 224 Hz
+      for one pod and brackets motion with two-second stationary bias intervals.
+      The CSV keeps raw values plus outlier flags and display-safe clean columns.
     </p>
     <section class="log-controls">
       <button id="btnLogStart" type="button" disabled>Start</button>
       <button id="btnLogStop" type="button" disabled>Stop</button>
-      <button id="btnLogDownload" type="button" disabled>Download CSV</button>
+      <button id="btnMagCal" type="button" disabled>Calibrate mag (30 s)</button>
+      <button id="btnLogDownload" type="button" disabled>Download CSV (raw + clean)</button>
       <button id="btnLogClear" type="button" disabled>Clear</button>
       <span class="status">Rows: <strong id="logRows">0</strong> · <strong id="logState">idle</strong></span>
     </section>
   </section>
 
-  <script type="module" src="app.js?v=7"></script>
+  <script type="module" src="app.js?v=12"></script>
 </body>
 </html>

@@ -10,14 +10,17 @@ export const CFG_NAME = "9b7e2002-2b2f-4f71-9b86-4bb2e6d54f00";
 export const CFG_SYNC = "9b7e2003-2b2f-4f71-9b86-4bb2e6d54f00";
 export const CFG_BATT = "9b7e2004-2b2f-4f71-9b86-4bb2e6d54f00";
 export const CFG_RATE = "9b7e2005-2b2f-4f71-9b86-4bb2e6d54f00";
+export const CFG_PROFILE = "9b7e2006-2b2f-4f71-9b86-4bb2e6d54f00";
 
 export const FLAG_MULTI = 0x0001;
 export const BATT_FLAG_VALID = 0x01;
+export const PROFILE_GENERAL = 0;
+export const PROFILE_HYROX = 1;
 
 /** Device stream rates (must match firmware allow-list). */
-export const RATE_LIVE_HZ = 50;
-export const RATE_LOG_HZ = 100;
-export const RATE_LOG_MAX_HZ = 150;
+export const RATE_LIVE_HZ = 56;
+export const RATE_LOG_HZ = 112;
+export const RATE_LOG_MAX_HZ = 224;
 
 export const CHANNELS = [
   { key: "ax", group: "accel", color: "#f07178", label: "Ax" },
@@ -60,9 +63,9 @@ export function decodeFrame(view, meta) {
     my: view.getInt16(16, true),
     mz: view.getInt16(18, true),
   };
-  const a = meta.accel_lsb_per_g || 4096;
-  const g = meta.gyro_lsb_per_dps || 64;
-  const m = meta.mag_lsb_per_gauss || 1000;
+  const a = meta.accel_lsb_per_g || 2048;
+  const g = meta.gyro_lsb_per_dps || 16;
+  const m = meta.mag_lsb_per_gauss || 3750;
   return {
     seq,
     raw,
@@ -78,6 +81,23 @@ export function decodeFrame(view, meta) {
       mz: raw.mz / m,
     },
   };
+}
+
+/** Decode one or more packed 20-byte frames from a BLE notification. */
+export function decodeFrames(view, meta) {
+  if (view.byteLength < 20 || view.byteLength % 20 !== 0) {
+    throw new Error(`invalid motion payload ${view.byteLength}`);
+  }
+  const frames = [];
+  for (let offset = 0; offset < view.byteLength; offset += 20) {
+    frames.push(
+      decodeFrame(
+        new DataView(view.buffer, view.byteOffset + offset, 20),
+        meta
+      )
+    );
+  }
+  return frames;
 }
 
 /** @param {DataView} view */
