@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "host/ble_hs.h"
+#include "host/ble_att.h"
 #include "host/ble_uuid.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -33,6 +34,9 @@ static const ble_uuid128_t uuid_motion_data =
 static const ble_uuid128_t uuid_motion_meta =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
                      0x71, 0x4f, 0x2f, 0x2b, 0x02, 0x10, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_motion_data_v16 =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x03, 0x10, 0x7e, 0x9b);
 
 static const ble_uuid128_t uuid_cfg_svc =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
@@ -55,10 +59,26 @@ static const ble_uuid128_t uuid_cfg_rate =
 static const ble_uuid128_t uuid_cfg_profile =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
                      0x71, 0x4f, 0x2f, 0x2b, 0x06, 0x20, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_cfg_session =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x07, 0x20, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_cfg_status =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x08, 0x20, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_cfg_caps =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x09, 0x20, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_cfg_session_v16 =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x0a, 0x20, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_cfg_status_v16 =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x0b, 0x20, 0x7e, 0x9b);
 
 static uint8_t s_own_addr_type;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_data_val_handle;
+static uint16_t s_data_v16_val_handle;
 static uint16_t s_meta_val_handle;
 static uint16_t s_info_val_handle;
 static uint16_t s_name_val_handle;
@@ -66,8 +86,14 @@ static uint16_t s_sync_val_handle;
 static uint16_t s_batt_val_handle;
 static uint16_t s_rate_val_handle;
 static uint16_t s_profile_val_handle;
+static uint16_t s_session_val_handle;
+static uint16_t s_status_val_handle;
+static uint16_t s_caps_val_handle;
+static uint16_t s_session_v16_val_handle;
+static uint16_t s_status_v16_val_handle;
 static volatile bool s_notify_enabled;
 static volatile bool s_motion_subscribed;
+static volatile bool s_motion_v16_subscribed;
 static volatile bool s_stream_requested;
 static volatile bool s_advertising;
 static volatile bool s_stack_running;
@@ -76,13 +102,30 @@ static char s_adv_name[DEVICE_CONFIG_NAME_MAX + 1];
 static uint8_t s_sync_rsp[SENSOR_PROTO_CFG_SYNC_RSP_LEN];
 static bool s_sync_rsp_valid;
 static volatile uint8_t s_workout_profile = SENSOR_PROTO_PROFILE_GENERAL;
+static volatile uint8_t s_session_state = SENSOR_PROTO_STATE_IDLE;
+static uint32_t s_capture_id;
+static uint16_t s_rate_epoch;
+static uint16_t s_last_command_id;
+static uint8_t s_last_error_reason;
+static volatile bool s_session_first_valid;
+static volatile uint32_t s_session_first_sample;
+static volatile uint32_t s_last_produced;
+static volatile uint32_t s_last_sent;
+static volatile uint32_t s_final_sample;
+static volatile bool s_drain_complete;
+static volatile bool s_accept_transport;
+static uint16_t s_queue_high_water;
+static uint32_t s_session_sensor_base;
+static uint32_t s_session_transport_base;
+static uint32_t s_session_notify_base;
+static uint8_t s_epoch_rate_hz;
 
 #define FRAME_QUEUE_DEPTH 96
 #define BATCH_MAX_FRAMES   8
 
 static struct ble_npl_event s_notify_ev;
-static sensor_proto_frame_t s_frame_queue[FRAME_QUEUE_DEPTH];
-static sensor_proto_frame_t s_retry_batch[BATCH_MAX_FRAMES];
+static sensor_proto_sample_t s_frame_queue[FRAME_QUEUE_DEPTH];
+static sensor_proto_sample_t s_retry_batch[BATCH_MAX_FRAMES];
 static portMUX_TYPE s_frame_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint16_t s_frame_head;
 static uint16_t s_frame_tail;
@@ -96,6 +139,12 @@ static esp_err_t start_advertise(void);
 static int gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t init_stack(void);
 static void host_task(void *param);
+static esp_err_t set_stream_rate(uint8_t rate_hz);
+static void notify_session_status(void);
+static void frame_queue_reset(void);
+static void maybe_complete_drain(void);
+static int handle_session_command(uint8_t command, uint32_t capture_id,
+                                  uint8_t rate_hz, uint16_t command_id);
 
 static void deinit_stack_after_init_failure(void)
 {
@@ -115,7 +164,8 @@ static void set_ui_state(ui_state_t state)
 
 static void apply_stream_state(void)
 {
-    s_notify_enabled = s_motion_subscribed && s_stream_requested;
+    bool subscribed = s_motion_subscribed || s_motion_v16_subscribed;
+    s_notify_enabled = subscribed && s_stream_requested;
     sensor_stream_set_enabled(s_notify_enabled);
     if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         set_ui_state(s_notify_enabled ? UI_STATE_STREAMING
@@ -127,6 +177,243 @@ static void load_adv_name(void)
 {
     if (device_config_get_adv_name(s_adv_name, sizeof(s_adv_name)) != ESP_OK) {
         snprintf(s_adv_name, sizeof(s_adv_name), "C3-Tracker");
+    }
+}
+
+static uint16_t queued_frame_count(void)
+{
+    uint16_t count;
+    taskENTER_CRITICAL(&s_frame_mux);
+    count = (uint16_t)(s_frame_count + s_retry_count);
+    taskEXIT_CRITICAL(&s_frame_mux);
+    return count;
+}
+
+static bool session_capture_active(void)
+{
+    return s_session_state == SENSOR_PROTO_STATE_PREPARED ||
+           s_session_state == SENSOR_PROTO_STATE_RECORDING ||
+           s_session_state == SENSOR_PROTO_STATE_STOP_REQUESTED ||
+           s_session_state == SENSOR_PROTO_STATE_DRAINING;
+}
+
+static bool session_accepts_samples(void)
+{
+    return s_session_state == SENSOR_PROTO_STATE_RECORDING ||
+           s_session_state == SENSOR_PROTO_STATE_STOP_REQUESTED;
+}
+
+static void note_rate_epoch_if_applied(void)
+{
+    uint8_t applied = sensor_stream_get_applied_rate_hz();
+    if (sensor_stream_is_rate_applied() && applied != s_epoch_rate_hz) {
+        s_rate_epoch++;
+        s_epoch_rate_hz = applied;
+    }
+}
+
+static esp_err_t set_stream_rate(uint8_t rate_hz)
+{
+    esp_err_t ret = sensor_stream_set_rate_hz(rate_hz);
+    return ret;
+}
+
+static void refresh_att_mtu(void)
+{
+    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+    uint16_t cur = ble_att_mtu(s_conn_handle);
+    if (cur >= BLE_ATT_MTU_DFLT && cur != s_att_mtu) {
+        s_att_mtu = cur;
+        ESP_LOGI(TAG, "ATT MTU refresh mtu=%u", (unsigned)cur);
+    }
+}
+
+static int on_mtu_exchanged(uint16_t conn_handle,
+                            const struct ble_gatt_error *error, uint16_t mtu,
+                            void *arg)
+{
+    (void)arg;
+    if (error == NULL || error->status != 0) {
+        uint16_t cur = ble_att_mtu(conn_handle);
+        ESP_LOGW(TAG, "ATT MTU exchange status=%d cur=%u",
+                 error ? error->status : -1, (unsigned)cur);
+        if (cur >= BLE_ATT_MTU_DFLT) {
+            s_att_mtu = cur;
+            notify_session_status();
+        }
+        return 0;
+    }
+    s_att_mtu = mtu;
+    ESP_LOGI(TAG, "ATT MTU exchange ok conn=%u mtu=%u", (unsigned)conn_handle,
+             (unsigned)mtu);
+    notify_session_status();
+    return 0;
+}
+
+static void fill_caps(sensor_proto_caps_t *caps)
+{
+    refresh_att_mtu();
+    memset(caps, 0, sizeof(*caps));
+    caps->ver = SENSOR_PROTO_FORMAT_VER_V16;
+    caps->feature_flags =
+        SENSOR_PROTO_CAP_FLAG_V1_FRAME | SENSOR_PROTO_CAP_FLAG_V16_FRAME |
+        SENSOR_PROTO_CAP_FLAG_DRAIN_BARRIER | SENSOR_PROTO_CAP_FLAG_APPLIED_RATE |
+        SENSOR_PROTO_CAP_FLAG_32BIT_SEQ;
+    caps->rate_mask = SENSOR_PROTO_RATE_MASK_56 | SENSOR_PROTO_RATE_MASK_112 |
+                      SENSOR_PROTO_RATE_MASK_224;
+    caps->max_batch_frames = BATCH_MAX_FRAMES;
+    caps->max_rate_hz = SENSOR_PROTO_RATE_LOG_MAX_HZ;
+    caps->imu_rate_hz = sensor_stream_get_applied_rate_hz();
+    caps->mag_rate_hz = sensor_stream_get_mag_rate_hz();
+    caps->att_mtu = s_att_mtu;
+    caps->queue_depth_max = FRAME_QUEUE_DEPTH;
+    caps->firmware_proto = SENSOR_PROTO_FORMAT_VER_V16;
+}
+
+static void fill_session_status_v1(sensor_proto_session_status_t *status)
+{
+    refresh_att_mtu();
+    note_rate_epoch_if_applied();
+    memset(status, 0, sizeof(*status));
+    status->ver = SENSOR_PROTO_FORMAT_VER;
+    status->state = s_session_state;
+    status->rate_hz = sensor_stream_get_applied_rate_hz();
+    status->capture_id = s_capture_id;
+    status->rate_epoch = s_rate_epoch;
+    status->first_seq =
+        s_session_first_valid ? (uint16_t)(s_session_first_sample & 0xffffu) : 0;
+    status->last_seq = (uint16_t)(s_last_produced & 0xffffu);
+    status->queue_depth = queued_frame_count();
+    status->sensor_dropped =
+        sensor_stream_dropped_count() - s_session_sensor_base;
+    status->transport_dropped = s_transport_dropped - s_session_transport_base;
+    status->notify_failures = s_notify_failures - s_session_notify_base;
+    status->uptime_ms = (uint32_t)((uint64_t)esp_timer_get_time() / 1000ULL);
+    if (s_session_first_valid) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_HAS_SAMPLES;
+    }
+    if (s_drain_complete) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_DRAIN_DONE;
+    }
+    if (sensor_stream_is_rate_applied()) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_RATE_APPLIED;
+    }
+    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_CONNECTED;
+    }
+    if (s_motion_subscribed || s_motion_v16_subscribed) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_SUBSCRIBED;
+    }
+    if (s_notify_enabled) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_STREAMING;
+    }
+
+    uint16_t battery_mv = 0;
+    uint8_t battery_pct = 0;
+    if (battery_read(&battery_mv, &battery_pct) == ESP_OK) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_BATT_VALID;
+        status->battery_mv = battery_mv;
+        status->battery_pct = battery_pct;
+    }
+}
+
+static void fill_session_status_v16(sensor_proto_session_status_v16_t *status)
+{
+    refresh_att_mtu();
+    note_rate_epoch_if_applied();
+    memset(status, 0, sizeof(*status));
+    status->ver = SENSOR_PROTO_FORMAT_VER_V16;
+    status->state = s_session_state;
+    status->requested_rate_hz = sensor_stream_get_rate_hz();
+    status->applied_rate_hz = sensor_stream_get_applied_rate_hz();
+    status->error_reason = s_last_error_reason;
+    status->last_command_id = s_last_command_id;
+    status->capture_id = s_capture_id;
+    status->rate_epoch = s_rate_epoch;
+    status->att_mtu = s_att_mtu;
+    status->first_sample = s_session_first_valid ? s_session_first_sample : 0;
+    status->last_produced = s_last_produced;
+    status->last_sent = s_last_sent;
+    status->final_sample = s_drain_complete ? s_final_sample : 0;
+    status->queue_depth = queued_frame_count();
+    status->queue_high_water = s_queue_high_water;
+    status->sensor_dropped =
+        sensor_stream_dropped_count() - s_session_sensor_base;
+    status->transport_dropped = s_transport_dropped - s_session_transport_base;
+    status->notify_failures = s_notify_failures - s_session_notify_base;
+    status->uptime_ms = (uint32_t)((uint64_t)esp_timer_get_time() / 1000ULL);
+    status->mag_rate_hz = sensor_stream_get_mag_rate_hz();
+
+    if (s_session_first_valid) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_HAS_SAMPLES;
+    }
+    if (s_drain_complete) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_DRAIN_DONE;
+    }
+    if (sensor_stream_is_rate_applied()) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_RATE_APPLIED;
+    }
+    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_CONNECTED;
+    }
+    if (s_motion_subscribed || s_motion_v16_subscribed) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_SUBSCRIBED;
+    }
+    if (s_notify_enabled) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_STREAMING;
+    }
+
+    uint16_t battery_mv = 0;
+    uint8_t battery_pct = 0;
+    if (battery_read(&battery_mv, &battery_pct) == ESP_OK) {
+        status->flags |= SENSOR_PROTO_SESSION_FLAG_BATT_VALID;
+        status->battery_mv = battery_mv;
+        status->battery_pct = battery_pct;
+    }
+}
+
+static void notify_session_status(void)
+{
+    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+
+    if (s_status_v16_val_handle != 0 &&
+        s_att_mtu >= SENSOR_PROTO_CFG_STATUS_V16_LEN + 3) {
+        sensor_proto_session_status_v16_t status = {0};
+        uint8_t wire[SENSOR_PROTO_CFG_STATUS_V16_LEN] = {0};
+        fill_session_status_v16(&status);
+        sensor_proto_pack_session_status_v16(wire, &status);
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(wire, sizeof(wire));
+        if (om) {
+            int rc =
+                ble_gatts_notify_custom(s_conn_handle, s_status_v16_val_handle, om);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "status v16 notify rc=%d", rc);
+            }
+        }
+    }
+
+    /* ATT notifications are not fragmented; long status is still available
+     * through the characteristic read path on a default 23-byte MTU. */
+    if (s_status_val_handle == 0 ||
+        s_att_mtu < SENSOR_PROTO_CFG_STATUS_LEN + 3) {
+        return;
+    }
+    sensor_proto_session_status_t status = {0};
+    uint8_t wire[SENSOR_PROTO_CFG_STATUS_LEN] = {0};
+    fill_session_status_v1(&status);
+    sensor_proto_pack_session_status(wire, &status);
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(wire, sizeof(wire));
+    if (!om) {
+        ESP_LOGW(TAG, "status notify allocation failed");
+        return;
+    }
+    int rc = ble_gatts_notify_custom(s_conn_handle, s_status_val_handle, om);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "status notify rc=%d", rc);
     }
 }
 
@@ -150,7 +437,7 @@ static int motion_access(uint16_t conn_handle, uint16_t attr_handle,
     }
     if (attr_handle == s_data_val_handle) {
         sensor_proto_frame_t frame = {0};
-        if (sensor_stream_get_latest(&frame) != ESP_OK) {
+        if (sensor_stream_get_latest_frame_v1(&frame) != ESP_OK) {
             return BLE_ATT_ERR_UNLIKELY;
         }
         uint8_t buf[SENSOR_PROTO_FRAME_LEN];
@@ -158,7 +445,111 @@ static int motion_access(uint16_t conn_handle, uint16_t attr_handle,
         return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0
                    ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
+    if (attr_handle == s_data_v16_val_handle) {
+        sensor_proto_sample_t sample = {0};
+        if (sensor_stream_get_latest(&sample) != ESP_OK) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        sensor_proto_frame_v16_t frame = {0};
+        sensor_proto_sample_to_frame_v16(&frame, &sample);
+        uint8_t buf[SENSOR_PROTO_FRAME_V16_LEN];
+        sensor_proto_pack_frame_v16(buf, &frame);
+        return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0
+                   ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
     return BLE_ATT_ERR_UNLIKELY;
+}
+
+static int handle_session_command(uint8_t command, uint32_t capture_id,
+                                  uint8_t rate_hz, uint16_t command_id)
+{
+    s_last_command_id = command_id;
+    s_last_error_reason = SENSOR_PROTO_ERR_NONE;
+
+    if (command == SENSOR_PROTO_SESSION_PREPARE) {
+        if (session_capture_active()) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BUSY;
+            return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+        }
+        if (capture_id == 0) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_CAPTURE_ID;
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        if (rate_hz != 0 && set_stream_rate(rate_hz) != ESP_OK) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_RATE;
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        s_capture_id = capture_id;
+        s_session_state = SENSOR_PROTO_STATE_PREPARED;
+        s_session_first_valid = false;
+        s_session_first_sample = 0;
+        s_last_produced = 0;
+        s_last_sent = 0;
+        s_final_sample = 0;
+        s_drain_complete = false;
+        s_accept_transport = true;
+        s_queue_high_water = 0;
+        s_session_sensor_base = sensor_stream_dropped_count();
+        s_session_transport_base = s_transport_dropped;
+        s_session_notify_base = s_notify_failures;
+        frame_queue_reset();
+    } else if (command == SENSOR_PROTO_SESSION_START) {
+        if (s_session_state != SENSOR_PROTO_STATE_PREPARED ||
+            capture_id != s_capture_id ||
+            (rate_hz != 0 && rate_hz != sensor_stream_get_rate_hz())) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_STATE;
+            return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+        }
+        s_session_state = SENSOR_PROTO_STATE_RECORDING;
+        s_session_first_valid = false;
+        s_accept_transport = true;
+        s_drain_complete = false;
+    } else if (command == SENSOR_PROTO_SESSION_STOP) {
+        if (s_session_state != SENSOR_PROTO_STATE_RECORDING ||
+            capture_id != s_capture_id) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_STATE;
+            return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+        }
+        s_session_state = SENSOR_PROTO_STATE_STOP_REQUESTED;
+    } else if (command == SENSOR_PROTO_SESSION_DRAIN) {
+        if (s_session_state != SENSOR_PROTO_STATE_STOP_REQUESTED ||
+            capture_id != s_capture_id) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_STATE;
+            return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+        }
+        s_session_state = SENSOR_PROTO_STATE_DRAINING;
+        /* Freeze the transport boundary: no new capture frames after this. */
+        s_accept_transport = false;
+        s_drain_complete = false;
+        maybe_complete_drain();
+    } else if (command == SENSOR_PROTO_SESSION_FINALIZE) {
+        if (s_session_state != SENSOR_PROTO_STATE_DRAINING ||
+            capture_id != s_capture_id) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_STATE;
+            return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+        }
+        maybe_complete_drain();
+        if (!s_drain_complete) {
+            s_last_error_reason = SENSOR_PROTO_ERR_DRAIN_INCOMPLETE;
+            return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+        }
+        s_session_state = SENSOR_PROTO_STATE_FINALIZED;
+    } else if (command == SENSOR_PROTO_SESSION_ABORT) {
+        s_session_state = SENSOR_PROTO_STATE_IDLE;
+        s_capture_id = 0;
+        s_session_first_valid = false;
+        s_accept_transport = true;
+        s_drain_complete = false;
+        s_final_sample = 0;
+    } else {
+        s_last_error_reason = SENSOR_PROTO_ERR_BAD_VERSION;
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    ESP_LOGI(TAG, "session command=%u capture=%" PRIu32 " state=%u cmd_id=%u",
+             command, s_capture_id, s_session_state, command_id);
+    notify_session_status();
+    return 0;
 }
 
 static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
@@ -178,6 +569,18 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             device_config_has_custom_name() ? 0x01 : 0x00,
         };
         return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0
+                   ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+
+    if (attr_handle == s_caps_val_handle) {
+        if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        sensor_proto_caps_t caps = {0};
+        uint8_t wire[SENSOR_PROTO_CFG_CAPS_LEN] = {0};
+        fill_caps(&caps);
+        sensor_proto_pack_caps(wire, &caps);
+        return os_mbuf_append(ctxt->om, wire, sizeof(wire)) == 0
                    ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
 
@@ -232,7 +635,7 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
 
     if (attr_handle == s_rate_val_handle) {
         if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-            uint8_t hz = sensor_stream_get_rate_hz();
+            uint8_t hz = sensor_stream_get_applied_rate_hz();
             return os_mbuf_append(ctxt->om, &hz, 1) == 0
                        ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
@@ -244,9 +647,13 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             if (ble_hs_mbuf_to_flat(ctxt->om, &hz, 1, NULL) != 0) {
                 return BLE_ATT_ERR_UNLIKELY;
             }
-            if (sensor_stream_set_rate_hz(hz) != ESP_OK) {
+            if (session_capture_active() && hz != sensor_stream_get_rate_hz()) {
+                return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+            }
+            if (set_stream_rate(hz) != ESP_OK) {
                 return BLE_ATT_ERR_UNLIKELY;
             }
+            notify_session_status();
             return 0;
         }
         return BLE_ATT_ERR_UNLIKELY;
@@ -268,8 +675,11 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
                 profile > SENSOR_PROTO_PROFILE_HYROX) {
                 return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
             }
+            if (session_capture_active()) {
+                return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+            }
             s_workout_profile = profile;
-            esp_err_t err = sensor_stream_set_rate_hz(
+            esp_err_t err = set_stream_rate(
                 profile == SENSOR_PROTO_PROFILE_HYROX
                     ? SENSOR_PROTO_RATE_LOG_MAX_HZ
                     : SENSOR_PROTO_RATE_LIVE_HZ);
@@ -279,9 +689,71 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
                 return BLE_ATT_ERR_UNLIKELY;
             }
             ESP_LOGI(TAG, "workout profile=%u", profile);
+            notify_session_status();
             return 0;
         }
         return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    if (attr_handle == s_session_val_handle) {
+        if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR ||
+            OS_MBUF_PKTLEN(ctxt->om) != SENSOR_PROTO_CFG_SESSION_LEN) {
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        uint8_t wire[SENSOR_PROTO_CFG_SESSION_LEN] = {0};
+        sensor_proto_session_cmd_t cmd = {0};
+        if (ble_hs_mbuf_to_flat(ctxt->om, wire, sizeof(wire), NULL) != 0) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        sensor_proto_unpack_session_cmd(&cmd, wire);
+        if (cmd.ver != SENSOR_PROTO_FORMAT_VER) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_VERSION;
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        return handle_session_command(cmd.command, cmd.capture_id, cmd.rate_hz, 0);
+    }
+
+    if (attr_handle == s_session_v16_val_handle) {
+        if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR ||
+            OS_MBUF_PKTLEN(ctxt->om) != SENSOR_PROTO_CFG_SESSION_V16_LEN) {
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        uint8_t wire[SENSOR_PROTO_CFG_SESSION_V16_LEN] = {0};
+        sensor_proto_session_cmd_v16_t cmd = {0};
+        if (ble_hs_mbuf_to_flat(ctxt->om, wire, sizeof(wire), NULL) != 0) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        sensor_proto_unpack_session_cmd_v16(&cmd, wire);
+        if (cmd.ver != SENSOR_PROTO_FORMAT_VER_V16) {
+            s_last_error_reason = SENSOR_PROTO_ERR_BAD_VERSION;
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        return handle_session_command(cmd.command, cmd.capture_id, cmd.rate_hz,
+                                      cmd.command_id);
+    }
+
+    if (attr_handle == s_status_val_handle) {
+        if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        sensor_proto_session_status_t status = {0};
+        uint8_t wire[SENSOR_PROTO_CFG_STATUS_LEN] = {0};
+        fill_session_status_v1(&status);
+        sensor_proto_pack_session_status(wire, &status);
+        return os_mbuf_append(ctxt->om, wire, sizeof(wire)) == 0
+                   ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+
+    if (attr_handle == s_status_v16_val_handle) {
+        if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        sensor_proto_session_status_v16_t status = {0};
+        uint8_t wire[SENSOR_PROTO_CFG_STATUS_V16_LEN] = {0};
+        fill_session_status_v16(&status);
+        sensor_proto_pack_session_status_v16(wire, &status);
+        return os_mbuf_append(ctxt->om, wire, sizeof(wire)) == 0
+                   ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
 
     if (attr_handle == s_sync_val_handle) {
@@ -296,10 +768,10 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             uint64_t client_ms = 0;
             memcpy(&client_ms, req, sizeof(client_ms));
             uint64_t device_us = (uint64_t)esp_timer_get_time();
-            uint16_t seq = 0;
-            sensor_proto_frame_t frame = {0};
-            if (sensor_stream_get_latest(&frame) == ESP_OK) {
-                seq = frame.seq;
+            uint16_t seq = (uint16_t)(sensor_stream_sample_index() & 0xffffu);
+            sensor_proto_sample_t sample = {0};
+            if (sensor_stream_get_latest(&sample) == ESP_OK) {
+                seq = (uint16_t)(sample.sample_index & 0xffffu);
             }
             memset(s_sync_rsp, 0, sizeof(s_sync_rsp));
             memcpy(&s_sync_rsp[0], &client_ms, sizeof(client_ms));
@@ -351,6 +823,12 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ,
                 .val_handle = &s_meta_val_handle,
             },
+            {
+                .uuid = &uuid_motion_data_v16.u,
+                .access_cb = motion_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_data_v16_val_handle,
+            },
             { 0 },
         },
     },
@@ -398,6 +876,36 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                          BLE_GATT_CHR_F_WRITE_NO_RSP,
                 .val_handle = &s_profile_val_handle,
             },
+            {
+                .uuid = &uuid_cfg_session.u,
+                .access_cb = cfg_access,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .val_handle = &s_session_val_handle,
+            },
+            {
+                .uuid = &uuid_cfg_status.u,
+                .access_cb = cfg_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_status_val_handle,
+            },
+            {
+                .uuid = &uuid_cfg_caps.u,
+                .access_cb = cfg_access,
+                .flags = BLE_GATT_CHR_F_READ,
+                .val_handle = &s_caps_val_handle,
+            },
+            {
+                .uuid = &uuid_cfg_session_v16.u,
+                .access_cb = cfg_access,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .val_handle = &s_session_v16_val_handle,
+            },
+            {
+                .uuid = &uuid_cfg_status_v16.u,
+                .access_cb = cfg_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_status_v16_val_handle,
+            },
             { 0 },
         },
     },
@@ -414,9 +922,24 @@ static void frame_queue_reset(void)
     taskEXIT_CRITICAL(&s_frame_mux);
 }
 
-static void frame_queue_push(const sensor_proto_frame_t *frame)
+static void maybe_complete_drain(void)
+{
+    if (s_session_state != SENSOR_PROTO_STATE_DRAINING || s_drain_complete) {
+        return;
+    }
+    if (queued_frame_count() != 0) {
+        return;
+    }
+    s_final_sample = s_last_sent;
+    s_drain_complete = true;
+    ESP_LOGI(TAG, "drain complete final_sample=%" PRIu32, s_final_sample);
+    notify_session_status();
+}
+
+static void frame_queue_push(const sensor_proto_sample_t *sample)
 {
     bool dropped = false;
+    uint16_t depth = 0;
     taskENTER_CRITICAL(&s_frame_mux);
     if (s_frame_count == FRAME_QUEUE_DEPTH) {
         s_frame_tail = (uint16_t)((s_frame_tail + 1) % FRAME_QUEUE_DEPTH);
@@ -424,22 +947,26 @@ static void frame_queue_push(const sensor_proto_frame_t *frame)
         s_transport_dropped++;
         dropped = true;
     }
-    s_frame_queue[s_frame_head] = *frame;
+    s_frame_queue[s_frame_head] = *sample;
     s_frame_head = (uint16_t)((s_frame_head + 1) % FRAME_QUEUE_DEPTH);
     s_frame_count++;
+    depth = (uint16_t)(s_frame_count + s_retry_count);
+    if (depth > s_queue_high_water) {
+        s_queue_high_water = depth;
+    }
     taskEXIT_CRITICAL(&s_frame_mux);
     if (dropped && (s_transport_dropped % 64) == 1) {
         ESP_LOGW(TAG, "BLE frame queue dropped=%" PRIu32, s_transport_dropped);
     }
 }
 
-static uint8_t prepare_retry_batch(void)
+static uint8_t prepare_retry_batch(uint8_t frame_len)
 {
     if (s_retry_count != 0) {
         return s_retry_count;
     }
-    uint16_t payload_len = s_att_mtu > 3 ? (uint16_t)(s_att_mtu - 3) : 20;
-    uint8_t max_frames = (uint8_t)(payload_len / SENSOR_PROTO_FRAME_LEN);
+    uint16_t payload_len = s_att_mtu > 3 ? (uint16_t)(s_att_mtu - 3) : frame_len;
+    uint8_t max_frames = (uint8_t)(payload_len / frame_len);
     if (max_frames < 1) {
         max_frames = 1;
     } else if (max_frames > BATCH_MAX_FRAMES) {
@@ -456,54 +983,96 @@ static uint8_t prepare_retry_batch(void)
     return s_retry_count;
 }
 
-static void notify_ev_cb(struct ble_npl_event *ev)
+static bool notify_batch(uint16_t val_handle, bool use_v16)
 {
-    (void)ev;
-    if (!s_notify_enabled || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-        return;
-    }
-    uint8_t frame_count = prepare_retry_batch();
+    uint8_t frame_len = use_v16 ? SENSOR_PROTO_FRAME_V16_LEN
+                                : SENSOR_PROTO_FRAME_LEN;
+    uint8_t frame_count = prepare_retry_batch(frame_len);
     if (frame_count == 0) {
-        return;
+        return false;
     }
 
-    uint8_t buf[SENSOR_PROTO_FRAME_LEN * BATCH_MAX_FRAMES];
+    uint8_t buf[SENSOR_PROTO_FRAME_V16_LEN * BATCH_MAX_FRAMES];
     for (uint8_t i = 0; i < frame_count; i++) {
-        sensor_proto_pack_frame(&buf[i * SENSOR_PROTO_FRAME_LEN],
-                                &s_retry_batch[i]);
+        if (use_v16) {
+            sensor_proto_frame_v16_t frame = {0};
+            sensor_proto_sample_to_frame_v16(&frame, &s_retry_batch[i]);
+            sensor_proto_pack_frame_v16(&buf[i * SENSOR_PROTO_FRAME_V16_LEN],
+                                        &frame);
+        } else {
+            sensor_proto_frame_t frame = {0};
+            sensor_proto_sample_to_frame_v1(&frame, &s_retry_batch[i]);
+            sensor_proto_pack_frame(&buf[i * SENSOR_PROTO_FRAME_LEN], &frame);
+        }
     }
-    uint16_t len = (uint16_t)(frame_count * SENSOR_PROTO_FRAME_LEN);
+    uint16_t len = (uint16_t)(frame_count * frame_len);
     struct os_mbuf *om = ble_hs_mbuf_from_flat(buf, len);
     if (!om) {
-        return;
+        return true; /* keep retry batch */
     }
-    int rc = ble_gatts_notify_custom(s_conn_handle, s_data_val_handle, om);
+    int rc = ble_gatts_notify_custom(s_conn_handle, val_handle, om);
     if (rc != 0) {
         s_notify_failures++;
         if ((s_notify_failures % 100) == 1) {
             ESP_LOGW(TAG, "notify rc=%d failures=%" PRIu32, rc,
                      s_notify_failures);
         }
+        /* Keep retry batch; caller re-arms while retry/queue remain. */
+        return true;
+    }
+
+    s_last_sent = s_retry_batch[frame_count - 1].sample_index;
+    s_retry_count = 0;
+    return true;
+}
+
+static void notify_ev_cb(struct ble_npl_event *ev)
+{
+    (void)ev;
+    if (!s_notify_enabled || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         return;
     }
-    s_notify_failures = 0;
-    s_retry_count = 0;
+
+    /*
+     * Prefer the v16 characteristic when subscribed; otherwise use legacy v1.
+     * Dual subscription is rare; sending once avoids doubling radio load.
+     */
+    bool sent = false;
+    if (s_motion_v16_subscribed) {
+        sent = notify_batch(s_data_v16_val_handle, true);
+    } else if (s_motion_subscribed) {
+        sent = notify_batch(s_data_val_handle, false);
+    }
+    if (!sent) {
+        maybe_complete_drain();
+        return;
+    }
 
     taskENTER_CRITICAL(&s_frame_mux);
-    bool more = s_frame_count > 0;
+    bool more = s_frame_count > 0 || s_retry_count > 0;
     taskEXIT_CRITICAL(&s_frame_mux);
     if (more) {
         ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_notify_ev);
+    } else {
+        maybe_complete_drain();
     }
 }
 
-static void on_frame(const sensor_proto_frame_t *frame, void *ctx)
+static void on_sample(const sensor_proto_sample_t *sample, void *ctx)
 {
     (void)ctx;
-    if (!s_notify_enabled) {
+    if (session_accepts_samples()) {
+        if (!s_session_first_valid) {
+            s_session_first_sample = sample->sample_index;
+            s_session_first_valid = true;
+        }
+        s_last_produced = sample->sample_index;
+    }
+    if (!s_notify_enabled || !s_accept_transport) {
+        maybe_complete_drain();
         return;
     }
-    frame_queue_push(frame);
+    frame_queue_push(sample);
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_notify_ev);
 }
 
@@ -580,10 +1149,26 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             if (rc != 0) {
                 ESP_LOGW(TAG, "data length request rc=%d", rc);
             }
+            /* Windows/Chrome often never initiate ATT MTU exchange; request it. */
+            rc = ble_gattc_exchange_mtu(s_conn_handle, on_mtu_exchanged, NULL);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "ATT MTU exchange request rc=%d", rc);
+                refresh_att_mtu();
+            }
             s_advertising = false;
             s_motion_subscribed = false;
+            s_motion_v16_subscribed = false;
             s_stream_requested = true;
             s_notify_enabled = false;
+            s_session_state = SENSOR_PROTO_STATE_IDLE;
+            s_capture_id = 0;
+            s_session_first_valid = false;
+            s_accept_transport = true;
+            s_drain_complete = false;
+            s_last_error_reason = SENSOR_PROTO_ERR_NONE;
+            s_session_sensor_base = sensor_stream_dropped_count();
+            s_session_transport_base = s_transport_dropped;
+            s_session_notify_base = s_notify_failures;
             sensor_stream_set_enabled(false);
             set_ui_state(UI_STATE_CONNECTED);
             if (s_link_cb) {
@@ -603,8 +1188,14 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         frame_queue_reset();
         s_advertising = false;
         s_motion_subscribed = false;
+        s_motion_v16_subscribed = false;
         s_stream_requested = true;
         s_notify_enabled = false;
+        s_session_state = SENSOR_PROTO_STATE_IDLE;
+        s_capture_id = 0;
+        s_session_first_valid = false;
+        s_accept_transport = true;
+        s_drain_complete = false;
         sensor_stream_set_enabled(false);
         if (start_advertise() != ESP_OK) {
             ESP_LOGE(TAG, "failed to advertise after disconnect");
@@ -613,20 +1204,35 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_SUBSCRIBE:
         if (event->subscribe.attr_handle == s_data_val_handle) {
             s_motion_subscribed = event->subscribe.cur_notify;
-            ESP_LOGI(TAG, "motion notify %s",
+            ESP_LOGI(TAG, "motion v1 notify %s",
                      s_motion_subscribed ? "ON" : "OFF");
-            if (!s_motion_subscribed) {
-                /* No subscriber → stop sampling (no radio broadcast of IMU). */
-                (void)sensor_stream_set_rate_hz(SENSOR_PROTO_RATE_LIVE_HZ);
+            if (!s_motion_subscribed && !s_motion_v16_subscribed) {
+                (void)set_stream_rate(SENSOR_PROTO_RATE_LIVE_HZ);
                 frame_queue_reset();
             }
             apply_stream_state();
+            notify_session_status();
+        } else if (event->subscribe.attr_handle == s_data_v16_val_handle) {
+            s_motion_v16_subscribed = event->subscribe.cur_notify;
+            ESP_LOGI(TAG, "motion v16 notify %s",
+                     s_motion_v16_subscribed ? "ON" : "OFF");
+            if (!s_motion_subscribed && !s_motion_v16_subscribed) {
+                (void)set_stream_rate(SENSOR_PROTO_RATE_LIVE_HZ);
+                frame_queue_reset();
+            }
+            apply_stream_state();
+            notify_session_status();
+        } else if ((event->subscribe.attr_handle == s_status_val_handle ||
+                    event->subscribe.attr_handle == s_status_v16_val_handle) &&
+                   event->subscribe.cur_notify) {
+            notify_session_status();
         }
         break;
     case BLE_GAP_EVENT_MTU:
         s_att_mtu = event->mtu.value;
         ESP_LOGI(TAG, "MTU update conn=%d mtu=%d",
                  event->mtu.conn_handle, event->mtu.value);
+        notify_session_status();
         break;
     default:
         break;
@@ -672,6 +1278,10 @@ static esp_err_t init_stack(void)
     }
     ble_svc_gap_init();
     ble_svc_gatt_init();
+    /* Prefer a large ATT MTU so a 22-byte v16 frame + batching can fit. */
+    if (ble_att_set_preferred_mtu(247) != 0) {
+        ESP_LOGW(TAG, "failed to set preferred ATT MTU");
+    }
     int rc = ble_gatts_count_cfg(gatt_svcs);
     if (rc != 0) {
         ESP_LOGE(TAG, "gatt count rc=%d", rc);
@@ -688,10 +1298,24 @@ static esp_err_t init_stack(void)
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_notify_enabled = false;
     s_motion_subscribed = false;
+    s_motion_v16_subscribed = false;
     s_stream_requested = true;
     s_att_mtu = BLE_ATT_MTU_DFLT;
     s_transport_dropped = 0;
     s_notify_failures = 0;
+    s_rate_epoch = 1;
+    s_epoch_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+    s_session_state = SENSOR_PROTO_STATE_IDLE;
+    s_capture_id = 0;
+    s_session_first_valid = false;
+    s_accept_transport = true;
+    s_drain_complete = false;
+    s_last_error_reason = SENSOR_PROTO_ERR_NONE;
+    s_last_command_id = 0;
+    s_queue_high_water = 0;
+    s_session_sensor_base = 0;
+    s_session_transport_base = 0;
+    s_session_notify_base = 0;
     frame_queue_reset();
     s_advertising = false;
     s_sync_rsp_valid = false;
@@ -709,7 +1333,7 @@ static void host_task(void *param)
 
 esp_err_t ble_tracker_init(void)
 {
-    sensor_stream_set_frame_cb(on_frame, NULL);
+    sensor_stream_set_sample_cb(on_sample, NULL);
     return ble_tracker_start_advertising();
 }
 
@@ -755,6 +1379,7 @@ esp_err_t ble_tracker_stop_advertising(void)
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_notify_enabled = false;
     s_motion_subscribed = false;
+    s_motion_v16_subscribed = false;
     s_stream_requested = true;
     frame_queue_reset();
     sensor_stream_set_enabled(false);
@@ -796,6 +1421,7 @@ esp_err_t ble_tracker_toggle_streaming(bool *out_enabled)
     if (out_enabled) {
         *out_enabled = s_stream_requested;
     }
+    notify_session_status();
     ESP_LOGI(TAG, "button stream %s",
              s_stream_requested ? "enabled" : "paused");
     return ESP_OK;

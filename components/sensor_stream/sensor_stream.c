@@ -23,18 +23,31 @@ enum {
 static TaskHandle_t s_task;
 static QueueHandle_t s_latest_q;
 static volatile bool s_enabled;
-static volatile uint8_t s_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+static volatile uint8_t s_requested_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+static volatile uint8_t s_applied_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+static volatile uint8_t s_mag_rate_hz = 50;
 static volatile bool s_rate_dirty;
 static volatile uint32_t s_dropped;
 static volatile uint32_t s_drdy_count;
-static sensor_stream_frame_cb_t s_cb;
+static volatile uint32_t s_sample_index;
+static sensor_stream_sample_cb_t s_cb;
 static void *s_cb_ctx;
 static sensor_proto_meta_t s_meta;
-static uint16_t s_seq;
 
 static bool rate_allowed(uint8_t hz)
 {
     return hz == 56 || hz == 112 || hz == 224;
+}
+
+static uint8_t mag_hz_for_imu(uint8_t imu_hz)
+{
+    if (imu_hz == 56) {
+        return 50;
+    }
+    if (imu_hz == 112) {
+        return 100;
+    }
+    return 200;
 }
 
 static void IRAM_ATTR imu_drdy_isr(void *arg)
@@ -77,21 +90,21 @@ static esp_err_t init_drdy_gpio(void)
 static void stream_task(void *arg)
 {
     (void)arg;
-    uint8_t applied = s_rate_hz;
     uint32_t last_drdy_count = 0;
 
     for (;;) {
         if (s_rate_dirty) {
-            uint8_t want = s_rate_hz;
+            uint8_t want = s_requested_rate_hz;
             esp_err_t imu_err = qmi8658_set_odr_for_rate(want);
             esp_err_t mag_err = qmc5883p_set_odr_for_rate(want);
             if (imu_err == ESP_OK && mag_err == ESP_OK) {
-                applied = want;
+                s_applied_rate_hz = want;
+                s_mag_rate_hz = mag_hz_for_imu(want);
                 s_meta.rate_hz = want;
             } else {
                 ESP_LOGW(TAG, "ODR update failed IMU=%s MAG=%s; keeping %u Hz",
                          esp_err_to_name(imu_err), esp_err_to_name(mag_err),
-                         applied);
+                         s_applied_rate_hz);
             }
             s_rate_dirty = false;
         }
@@ -119,7 +132,8 @@ static void stream_task(void *arg)
             if (elapsed_samples > 1) {
                 uint32_t missed = elapsed_samples - 1;
                 uint32_t dropped_before = s_dropped;
-                s_seq = (uint16_t)(s_seq + missed);
+                /* Advance the sample clock for each coalesced DRDY slot. */
+                s_sample_index += missed;
                 s_dropped += missed;
                 if (dropped_before == 0 ||
                     s_dropped / 64 != dropped_before / 64) {
@@ -135,9 +149,14 @@ static void stream_task(void *arg)
         esp_err_t e1 = qmi8658_read_raw(&imu);
         esp_err_t e2 = qmc5883p_read_raw(&mag);
 
+        /*
+         * Always consume one sample_index slot so failed reads remain visible
+         * as gaps in the host timebase rather than silent stalls.
+         */
+        uint32_t index = s_sample_index++;
         if (e1 == ESP_OK && e2 == ESP_OK) {
-            sensor_proto_frame_t frame = {
-                .seq = s_seq++,
+            sensor_proto_sample_t sample = {
+                .sample_index = index,
                 .ax = imu.ax,
                 .ay = imu.ay,
                 .az = imu.az,
@@ -150,18 +169,17 @@ static void stream_task(void *arg)
             };
 
             /* Length-1 latest queue: overwrite stale samples. */
-            if (xQueueOverwrite(s_latest_q, &frame) != pdTRUE) {
+            if (xQueueOverwrite(s_latest_q, &sample) != pdTRUE) {
                 s_dropped++;
             }
             if (s_cb) {
-                s_cb(&frame, s_cb_ctx);
+                s_cb(&sample, s_cb_ctx);
             }
         } else {
-            ESP_LOGW(TAG, "sample fail IMU=%s MAG=%s", esp_err_to_name(e1),
-                     esp_err_to_name(e2));
+            ESP_LOGW(TAG, "sample fail IMU=%s MAG=%s index=%" PRIu32,
+                     esp_err_to_name(e1), esp_err_to_name(e2), index);
             s_dropped++;
         }
-
     }
 }
 
@@ -181,9 +199,12 @@ esp_err_t sensor_stream_init(void)
     ESP_RETURN_ON_ERROR(qmi8658_get_scale(&as), TAG, "a scale");
     ESP_RETURN_ON_ERROR(qmc5883p_get_scale(&ms), TAG, "m scale");
 
-    s_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+    s_requested_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+    s_applied_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
+    s_mag_rate_hz = mag_hz_for_imu(SENSOR_PROTO_RATE_LIVE_HZ);
     s_rate_dirty = false;
     s_drdy_count = 0;
+    s_sample_index = 0;
     s_meta = (sensor_proto_meta_t){
         .ver = SENSOR_PROTO_FORMAT_VER,
         .rate_hz = SENSOR_PROTO_RATE_LIVE_HZ,
@@ -194,7 +215,7 @@ esp_err_t sensor_stream_init(void)
         .reserved = 0,
     };
 
-    s_latest_q = xQueueCreate(1, sizeof(sensor_proto_frame_t));
+    s_latest_q = xQueueCreate(1, sizeof(sensor_proto_sample_t));
     ESP_RETURN_ON_FALSE(s_latest_q, ESP_ERR_NO_MEM, TAG, "queue");
 
     BaseType_t ok =
@@ -227,8 +248,7 @@ esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz)
     if (!rate_allowed(rate_hz)) {
         return ESP_ERR_INVALID_ARG;
     }
-    s_rate_hz = rate_hz;
-    s_meta.rate_hz = rate_hz;
+    s_requested_rate_hz = rate_hz;
     s_rate_dirty = true;
     if (s_task) {
         xTaskNotify(s_task, TASK_NOTIFY_CONTROL, eSetBits);
@@ -239,16 +259,31 @@ esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz)
 
 uint8_t sensor_stream_get_rate_hz(void)
 {
-    return s_rate_hz;
+    return s_requested_rate_hz;
 }
 
-void sensor_stream_set_frame_cb(sensor_stream_frame_cb_t cb, void *ctx)
+uint8_t sensor_stream_get_applied_rate_hz(void)
+{
+    return s_applied_rate_hz;
+}
+
+bool sensor_stream_is_rate_applied(void)
+{
+    return !s_rate_dirty && s_requested_rate_hz == s_applied_rate_hz;
+}
+
+uint8_t sensor_stream_get_mag_rate_hz(void)
+{
+    return s_mag_rate_hz;
+}
+
+void sensor_stream_set_sample_cb(sensor_stream_sample_cb_t cb, void *ctx)
 {
     s_cb = cb;
     s_cb_ctx = ctx;
 }
 
-esp_err_t sensor_stream_get_latest(sensor_proto_frame_t *out)
+esp_err_t sensor_stream_get_latest(sensor_proto_sample_t *out)
 {
     ESP_RETURN_ON_FALSE(out && s_latest_q, ESP_ERR_INVALID_STATE, TAG, "bad");
     if (xQueuePeek(s_latest_q, out, 0) != pdTRUE) {
@@ -257,14 +292,32 @@ esp_err_t sensor_stream_get_latest(sensor_proto_frame_t *out)
     return ESP_OK;
 }
 
+esp_err_t sensor_stream_get_latest_frame_v1(sensor_proto_frame_t *out)
+{
+    sensor_proto_sample_t sample = {0};
+    esp_err_t err = sensor_stream_get_latest(&sample);
+    if (err != ESP_OK) {
+        return err;
+    }
+    sensor_proto_sample_to_frame_v1(out, &sample);
+    return ESP_OK;
+}
+
 uint32_t sensor_stream_dropped_count(void)
 {
     return s_dropped;
+}
+
+uint32_t sensor_stream_sample_index(void)
+{
+    return s_sample_index;
 }
 
 esp_err_t sensor_stream_get_meta(sensor_proto_meta_t *out)
 {
     ESP_RETURN_ON_FALSE(out, ESP_ERR_INVALID_ARG, TAG, "null");
     *out = s_meta;
+    /* Meta continues to report applied rate for v1 clients. */
+    out->rate_hz = s_applied_rate_hz;
     return ESP_OK;
 }

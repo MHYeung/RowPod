@@ -1,8 +1,10 @@
 /** Column header row (data table starts after # meta comments). */
 export const CSV_COLUMNS =
-  "position,device_id,pod_id,rate_hz,synced_ms,arrival_ms,sample_ms,seq," +
-  "capture_phase,stationary,accel_norm_g,gyro_norm_dps,mag_norm_G," +
-  "outlier_mask,outlier_reason," +
+  "position,device_id,pod_id,rate_hz,applied_rate_hz,protocol_ver,synced_ms,arrival_ms,sample_ms,seq,sample_index," +
+  "missing_frames,gap_events,capture_id,rate_epoch,firmware_state,device_first_sample,device_last_produced," +
+  "device_last_sent,device_final_sample,device_has_samples,device_drain_done,device_queue_depth,device_queue_high_water," +
+  "device_sensor_dropped,device_transport_dropped,device_notify_failures,device_att_mtu,capture_phase,stationary," +
+  "accel_norm_g,gyro_norm_dps,mag_norm_G,outlier_mask,outlier_reason," +
   "training_profile,training_station,training_reps,training_effort,training_working," +
   "ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,mx_G,my_G,mz_G," +
   "ax_clean_g,ay_clean_g,az_clean_g,gx_clean_dps,gy_clean_dps,gz_clean_dps," +
@@ -36,6 +38,7 @@ export class CsvLogger {
     this.onChange = null;
     this._session = null;
     this.phase = "idle";
+    this.state = "idle";
     this.stillnessMs = 2000;
   }
 
@@ -56,6 +59,7 @@ export class CsvLogger {
     this.podState.clear();
     this._session = session;
     this.phase = "bias_start";
+    this.state = "bias_start";
     this.stillnessMs = session.stillnessMs || 2000;
     this.headerLines = this._buildHeader(session);
     this._emit();
@@ -64,11 +68,26 @@ export class CsvLogger {
   stop() {
     this.recording = false;
     this.phase = "idle";
+    this.state = "idle";
     this._emit();
   }
 
   beginEndStillness() {
-    if (this.recording) this.phase = "bias_end";
+    if (this.recording) {
+      this.phase = "bias_end";
+      this.state = "stop_requested";
+    }
+  }
+
+  beginDrain() {
+    if (this.recording) {
+      this.phase = "drain";
+      this.state = "draining";
+    }
+  }
+
+  finalize() {
+    if (this.recording) this.state = "finalized";
   }
 
   clear() {
@@ -81,15 +100,21 @@ export class CsvLogger {
     this.podState.clear();
     this._session = null;
     this.phase = "idle";
+    this.state = "idle";
     this._emit();
   }
 
   /**
-   * @param {{seq:number, eng:object, raw:object}} frame
-   * @param {{position:string,deviceId:string,podId:number,rateHz:number,syncedMs?:number,magCalibration?:object,quality?:object}} pod
+   * @param {{seq:number, sampleIndex?:number, eng:object, raw:object}} frame
+   * @param {{position:string,deviceId:string,podId:number,rateHz:number,syncedMs?:number,magCalibration?:object,quality?:object,sessionStatus?:object,missingFrames?:number,gapEvents?:number,protocolVersion?:number}} pod
    */
   push(frame, pod) {
     if (!this.recording) return;
+    if (this._session?.captureId &&
+        pod.sessionStatus?.captureId === this._session.captureId &&
+        pod.sessionStatus.stateName === "prepared") {
+      return;
+    }
     const id = pod.deviceId || "unknown";
     let st = this.podState.get(id);
     if (!st) {
@@ -102,15 +127,17 @@ export class CsvLogger {
       this.podState.set(id, st);
     }
     st.rateHz = pod.rateHz || st.rateHz;
-    if (st.firstSeq === null) st.firstSeq = frame.seq;
+    const sampleIndex = frame.sampleIndex ?? frame.seq;
+    if (st.firstSeq === null) st.firstSeq = sampleIndex;
 
     const elapsedMs = performance.now() - this.t0;
     if (this.phase === "bias_start" && elapsedMs >= this.stillnessMs) {
       this.phase = "motion";
+      this.state = "motion";
     }
     const arrivalMs = elapsedMs.toFixed(1);
-    const seqDelta = (frame.seq - st.firstSeq + 0x10000) & 0xffff;
-    const sampleMs = ((seqDelta * 1000) / st.rateHz).toFixed(1);
+    const seqDelta = sampleIndex - st.firstSeq;
+    const sampleMs = ((Math.max(0, seqDelta) * 1000) / st.rateHz).toFixed(1);
     const syncedMs =
       pod.syncedMs != null ? Number(pod.syncedMs).toFixed(1) : arrivalMs;
     const e = frame.eng;
@@ -120,6 +147,7 @@ export class CsvLogger {
     const training = pod.training || {
       profile: 0, station: "", reps: 0, effort: 0, working: false,
     };
+    const protocol = pod.sessionStatus || {};
     const accelNorm = Math.hypot(e.ax, e.ay, e.az);
     const gyroNorm = Math.hypot(e.gx, e.gy, e.gz);
     const magNorm = Math.hypot(e.mx, e.my, e.mz);
@@ -135,10 +163,30 @@ export class CsvLogger {
       id,
       pod.podId ?? "",
       st.rateHz,
+      protocol.appliedRateHz ?? protocol.rateHz ?? st.rateHz,
+      pod.protocolVersion ?? protocol.protocol ?? protocol.ver ?? "",
       syncedMs,
       arrivalMs,
       sampleMs,
       frame.seq,
+      sampleIndex,
+      pod.missingFrames ?? "",
+      pod.gapEvents ?? "",
+      protocol.captureId ?? this._session?.captureId ?? "",
+      protocol.rateEpoch ?? "",
+      csvEscape(protocol.stateName || protocol.state || ""),
+      protocol.firstSample ?? protocol.firstSeq ?? "",
+      protocol.lastProduced ?? protocol.lastSeq ?? "",
+      protocol.lastSent ?? "",
+      protocol.finalSample ?? "",
+      protocol.hasSamples ? 1 : 0,
+      protocol.drainDone ? 1 : 0,
+      protocol.queueDepth ?? "",
+      protocol.queueHighWater ?? "",
+      protocol.sensorDropped ?? "",
+      protocol.transportDropped ?? "",
+      protocol.notifyFailures ?? "",
+      protocol.attMtu ?? "",
       this.phase,
       stationary ? 1 : 0,
       accelNorm, gyroNorm, magNorm,
@@ -201,28 +249,37 @@ export class CsvLogger {
     const iso = new Date().toISOString();
     const pods = session.pods || [];
     const lines = [
-      "# C3-Tracker CSV v4",
+      "# C3-Tracker CSV v6",
       `# created_iso=${iso}`,
       `# format=comment_meta_then_columns`,
       `# live_rate_hz=${session.liveRateHz}`,
       `# log_rate_hz=${session.logRateHz}`,
+      `# capture_id=${session.captureId ?? ""}`,
+      "# session_state=PREPARE→CONFIGURE→BIAS_START→MOTION→STOP_REQUESTED→DRAIN→FINALIZE",
       `# ring_capacity=${this.capacity}`,
       `# pod_count=${pods.length}`,
       `# required_stillness_ms=${session.stillnessMs || 2000}`,
-      "# timebase=arrival_ms is ms since Start; sample_ms is seq-derived at log_rate_hz",
+      "# timebase=arrival_ms is ms since Start; sample_ms is sample_index-derived at log_rate_hz",
       "# synced_ms=browser estimate (software sync offset); not sample-locked IMU time",
       "# units=ax/ay/az g; gx/gy/gz dps; mx/my/mz gauss; raw=int16 sensor LSB",
       "# stationary_candidate=abs(|accel|-1)<=0.08g and |gyro|<=3dps",
       "# outlier_mask=1 accel rail, 2 gyro rail, 4 mag rail; clean columns are display-safe",
+      "# device_* columns are pod status snapshots; sample_index/sample_ms remain frame-derived",
       `# training_profile=${session.trainingProfile || 0};station=${session.trainingStation || ""}`,
+      `# preflight=${csvEscape(session.preflightSummary || "")}`,
     ];
     pods.forEach((p, i) => {
       const sync = p.sync?.ok
         ? `rtt_ms=${Math.round(p.sync.rttMs)};offset_ms=${Number(p.sync.offsetMs).toFixed(1)}`
         : "sync=off";
       lines.push(
-        `# pod${i}=id:${p.id};position:${csvEscape(p.position || "")};pod_id:${p.podId ?? ""};${sync}`
+        `# pod${i}=id:${p.id};position:${csvEscape(p.position || "")};pod_id:${p.podId ?? ""};proto:${p.protocolVersion ?? ""};${sync}`
       );
+      if (p.caps) {
+        lines.push(
+          `# pod${i}_caps=mtu:${p.caps.attMtu ?? ""};max_batch:${p.caps.maxBatchFrames ?? ""};imu:${p.caps.imuRateHz ?? ""};mag:${p.caps.magRateHz ?? ""}`
+        );
+      }
       if (p.magCalibration) {
         const c = p.magCalibration;
         lines.push(

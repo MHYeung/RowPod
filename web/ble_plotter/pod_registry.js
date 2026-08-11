@@ -1,6 +1,6 @@
 import { BleClient } from "./ble_client.js";
 import { MotionOutlierFilter } from "./outlier_filter.js";
-import { POD_COLORS } from "./protocol.js";
+import { POD_COLORS, capturePreflight } from "./protocol.js";
 
 const STORE_KEY = "c3_pod_labels_v1";
 
@@ -49,28 +49,36 @@ export class PodRegistry {
     if (this.onStats) this.onStats(this.list(), this.selectedId);
   }
 
-  async pauseStreams() {
-    const paused = [];
+  async softHoldStreams() {
+    const held = [];
     for (const session of this.sessions.values()) {
       if (session.status !== "connected") continue;
       try {
-        if (await session.client.pauseNotifications()) paused.push(session);
+        session.client.beginPeerHold();
+        session.sensorStatus = "paused";
+        held.push(session);
       } catch (error) {
-        console.warn("pause stream failed", session.position, error);
+        console.warn("soft hold failed", session.position, error);
       }
     }
-    return paused;
+    return held;
   }
 
-  async resumeStreams(sessions) {
+  async releaseSoftHold(sessions) {
     for (const session of sessions || []) {
       if (session.status !== "connected") continue;
       try {
-        await session.client.resumeNotifications();
+        session.client.endPeerHold();
+        session.gaps = 0;
+        session.missingFrames = 0;
+        session.recentMissingFrames = 0;
+        session.lastFrameAt = performance.now();
+        session.sensorStatus = "streaming";
       } catch (error) {
-        console.warn("resume stream failed", session.position, error);
+        console.warn("soft hold release failed", session.position, error);
       }
     }
+    this._emitStats();
   }
 
   async addPod() {
@@ -85,16 +93,19 @@ export class PodRegistry {
 
   async _addPod() {
     const client = new BleClient();
-    let pausedSessions = [];
+    let heldSessions = [];
     try {
       await client.connect({
         beforeGattConnect: async () => {
-          pausedSessions = await this.pauseStreams();
+          /* Soft-hold only: keep CCCD so existing pods keep sampling. Hard
+           * pause (stopNotifications) stopped the firmware stream and created
+           * sequence gaps that left the first pod stale/degraded forever. */
+          heldSessions = await this.softHoldStreams();
         },
       });
-      await this.resumeStreams(pausedSessions);
+      await this.releaseSoftHold(heldSessions);
     } catch (error) {
-      await this.resumeStreams(pausedSessions);
+      await this.releaseSoftHold(heldSessions);
       try {
         await client.disconnect();
       } catch (_) {
@@ -122,12 +133,15 @@ export class PodRegistry {
       color,
       status: "connected",
       gaps: 0,
+      missingFrames: 0,
+      recentMissingFrames: 0,
       rate: 0,
       frames: 0,
       totalFrames: 0,
       windowStart: performance.now(),
       sync: { offsetMs: 0, rttMs: 0, ok: false },
       battery: { ...client.battery },
+      batteryReadError: "",
       mode: client.info.mode,
       podId: client.info.podId,
       sensorStatus: "waiting",
@@ -135,14 +149,32 @@ export class PodRegistry {
       outliers: 0,
       history: [],
       outlierFilter: new MotionOutlierFilter(),
+      sessionStatus: client.sessionStatus,
+      caps: client.caps,
+      protocolVersion: client.protocolVersion,
+      protocolError: "",
     };
 
-    client.onFrame = (frame, gaps) => {
+    client.onFrame = (frame, gaps, missingFrames = 0) => {
       session.gaps = gaps;
+      session.missingFrames = missingFrames;
+      if (frame.missing) {
+        session.recentMissingFrames =
+          (session.recentMissingFrames || 0) + frame.missing;
+        session._cleanFrames = 0;
+      } else {
+        session._cleanFrames = (session._cleanFrames || 0) + 1;
+        const clearAfter = Math.max(56, (session.rate || 56) * 2);
+        if (session._cleanFrames >= clearAfter) {
+          session.recentMissingFrames = 0;
+        }
+      }
       session.frames += 1;
       const now = performance.now();
       session.lastFrameAt = now;
-      session.sensorStatus = "streaming";
+      if (session.sensorStatus !== "paused") {
+        session.sensorStatus = "streaming";
+      }
       session.totalFrames += 1;
       const quality = session.outlierFilter.observe(frame);
       if (quality.mask) session.outliers += 1;
@@ -172,6 +204,16 @@ export class PodRegistry {
       session.status = "lost";
       session.sensorStatus = "lost";
       this._emit();
+    };
+    client.onSessionStatus = (status) => {
+      session.sessionStatus = status;
+      session.protocolError = "";
+      const applied = status?.appliedRateHz || status?.rateHz;
+      if (applied) session.client.meta.rate_hz = applied;
+      if (status?.attMtu && session.caps) {
+        session.caps = { ...session.caps, attMtu: status.attMtu };
+      }
+      this._emitStats();
     };
 
     this.sessions.set(id, session);
@@ -223,7 +265,13 @@ export class PodRegistry {
   async refreshBattery(id) {
     const session = this.sessions.get(id);
     if (!session) return null;
-    session.battery = { ...(await session.client.readBattery()) };
+    try {
+      session.battery = { ...(await session.client.readBattery()) };
+      session.batteryReadError = "";
+    } catch (error) {
+      session.batteryReadError = String(error.message || error);
+      throw error;
+    }
     this._emitStats();
     return session.battery;
   }
@@ -233,7 +281,9 @@ export class PodRegistry {
       if (s.status !== "connected") continue;
       try {
         s.battery = { ...(await s.client.readBattery()) };
+        s.batteryReadError = "";
       } catch (e) {
+        s.batteryReadError = String(e.message || e);
         console.warn("battery read failed", e);
       }
     }
@@ -264,6 +314,124 @@ export class PodRegistry {
       }
     }
     this._emitStats();
+  }
+
+  /**
+   * Clear sequence / freshness counters after intentional capture teardown so
+   * Summary health is not stuck on capture-time radio gaps.
+   */
+  clearIntegrityCounters() {
+    for (const session of this.sessions.values()) {
+      if (session.status !== "connected") continue;
+      session.client.resyncSequence();
+      session.gaps = 0;
+      session.missingFrames = 0;
+      session.recentMissingFrames = 0;
+      session._cleanFrames = 0;
+      session.lastFrameAt = performance.now();
+      if (session.sensorStatus !== "paused") {
+        session.sensorStatus = "streaming";
+      }
+    }
+    this._emitStats();
+  }
+
+  async sessionCommandAll(command, captureId, rateHz = 0, flags = 0) {
+    const connected = this.list().filter((s) => s.status === "connected");
+    const results = [];
+    for (const session of connected) {
+      try {
+        const status = await session.client.sendSessionCommand(
+          command,
+          captureId,
+          rateHz,
+          flags
+        );
+        session.sessionStatus = status || session.client.sessionStatus;
+        session.protocolError = "";
+        if (session.sessionStatus?.appliedRateHz || session.sessionStatus?.rateHz) {
+          session.client.meta.rate_hz =
+            session.sessionStatus.appliedRateHz || session.sessionStatus.rateHz;
+        }
+        results.push(session.sessionStatus);
+      } catch (error) {
+        session.protocolError = String(error.message || error);
+        this._emitStats();
+        throw new Error(`${session.position}: ${session.protocolError}`);
+      }
+    }
+    this._emitStats();
+    return results;
+  }
+
+  async refreshAllSessionStatus() {
+    for (const session of this.sessions.values()) {
+      if (session.status !== "connected") continue;
+      try {
+        session.sessionStatus = await session.client.readSessionStatus();
+        session.caps = session.client.caps || session.caps;
+        session.protocolVersion = session.client.protocolVersion;
+        session.protocolError = "";
+      } catch (error) {
+        session.protocolError = String(error.message || error);
+      }
+    }
+    this._emitStats();
+  }
+
+  /**
+   * @param {number} rateHz
+   * @returns {{ok:boolean,warnings:string[],details:object[]}}
+   */
+  capturePreflightAll(rateHz) {
+    const connected = this.list().filter((s) => s.status === "connected");
+    const details = connected.map((session) => {
+      const caps = {
+        ...(session.caps || {}),
+        attMtu: session.sessionStatus?.attMtu || session.caps?.attMtu || 23,
+        /* Preflight must use the stream we will actually send. */
+        supportsV16: Boolean(
+          session.client.usesV16Motion &&
+          (session.sessionStatus?.attMtu || session.caps?.attMtu || 23) >= 25
+        ),
+      };
+      const result = capturePreflight(caps, rateHz, connected.length);
+      return {
+        position: session.position,
+        protocolVersion: session.protocolVersion,
+        ...result,
+        caps,
+      };
+    });
+    const warnings = details.flatMap((d) =>
+      d.warnings.map((w) => `${d.position}: ${w}`)
+    );
+    return { ok: warnings.length === 0, warnings, details };
+  }
+
+  async waitForDrain(captureId, { timeoutMs = 5000, pollMs = 100 } = {}) {
+    const started = performance.now();
+    while (performance.now() - started < timeoutMs) {
+      await this.refreshAllSessionStatus();
+      const connected = this.list().filter((s) => s.status === "connected");
+      const pending = connected.filter((s) => {
+        const status = s.sessionStatus;
+        if (!status || status.captureId !== captureId) return true;
+        if (status.errorReason) return true;
+        return !(status.drainDone && (status.queueDepth ?? 1) === 0);
+      });
+      if (!pending.length) {
+        return connected.map((s) => s.sessionStatus);
+      }
+      const hardFail = pending.find((s) => s.sessionStatus?.errorReason);
+      if (hardFail) {
+        throw new Error(
+          `${hardFail.position}: ${hardFail.sessionStatus.errorName || "protocol error"}`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    throw new Error("drain timed out before queue emptied");
   }
 
   async disconnect(id) {

@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>C3-Tracker Web BLE</title>
-  <link rel="stylesheet" href="styles.css?v=12" />
+  <link rel="stylesheet" href="styles.css?v=16.4" />
 </head>
 <body>
   <header>
     <h1>C3-Tracker</h1>
-    <p class="sub">Fusion-grade capture, pod fleet summary, and HYROX training · dashboard v12</p>
+    <p class="sub">Fusion-grade capture, pod fleet summary, and HYROX training · dashboard v16</p>
   </header>
 
   <section class="controls">
@@ -24,6 +24,7 @@
     <button type="button" class="tab" data-tab="orientation" role="tab" aria-selected="false">Orientation</button>
     <button type="button" class="tab" data-tab="hyrox" role="tab" aria-selected="false">HYROX</button>
     <button type="button" class="tab" data-tab="logging" role="tab" aria-selected="false">CSV log</button>
+    <button type="button" class="tab" data-tab="battery-test" role="tab" aria-selected="false">Battery test</button>
   </nav>
 
   <section id="panel-summary" class="tab-panel active" role="tabpanel">
@@ -42,6 +43,12 @@
       <div>Selected rate: <strong id="rate">—</strong> Hz</div>
       <div>Selected gaps: <strong id="gaps">0</strong></div>
       <div>Meta: <strong id="meta">—</strong></div>
+    </section>
+    <section class="integrity" aria-label="Capture integrity">
+      <h2>Capture integrity</h2>
+      <div id="captureIntegrity" class="integrity-body">
+        Connect a pod to inspect capture integrity.
+      </div>
     </section>
   </section>
 
@@ -117,7 +124,9 @@
     <p class="hint">
       Calibrate the magnetometer in the assembled enclosure first: slow figure-8 and
       tumble through nose/tail/side-down (not flat table spins). Logging uses 224 Hz
-      for one pod and brackets motion with two-second stationary bias intervals.
+      for one pod and 112 Hz for two or more (prefers max rate over zero-loss)
+      and brackets motion with two-second stationary bias intervals.
+      Start runs a transport preflight; stop waits for a device drain-complete barrier.
       The CSV keeps raw values plus outlier flags and display-safe clean columns.
     </p>
     <section class="log-controls">
@@ -130,6 +139,56 @@
     </section>
   </section>
 
-  <script type="module" src="app.js?v=12"></script>
+  <section id="panel-battery-test" class="tab-panel" role="tabpanel" hidden>
+    <p class="hint">
+      Connected endurance logger: records pack voltage, percentage, connection
+      state, actual rate, gaps, and outliers for every pod. Keep this browser tab
+      visible; a hidden browser can delay scheduled samples. This measures runtime
+      behavior, not battery capacity in mAh.
+    </p>
+    <section class="test-controls">
+      <label>
+        Test label
+        <input id="testLabel" type="text" maxlength="48"
+          placeholder="e.g. one-pod-56Hz-live" />
+      </label>
+      <label>
+        Sample interval
+        <select id="testInterval">
+          <option value="30">30 s</option>
+          <option value="60" selected>60 s</option>
+          <option value="300">5 min</option>
+        </select>
+      </label>
+      <button id="btnTestStart" type="button" disabled>Start status log</button>
+      <button id="btnTestStop" type="button" disabled>Stop</button>
+      <button id="btnTestDownload" type="button" disabled>Download status CSV</button>
+      <button id="btnTestClear" type="button" disabled>Clear</button>
+    </section>
+    <section class="test-kpis">
+      <div>Elapsed: <strong id="testElapsed">0:00</strong></div>
+      <div>Status rows: <strong id="testRows">0</strong></div>
+      <div>State: <strong id="testState">idle</strong></div>
+    </section>
+    <div class="test-table-wrap">
+      <table class="test-table">
+        <caption>Latest logged device status</caption>
+        <thead>
+          <tr>
+            <th>Pod</th>
+            <th>Elapsed</th>
+            <th>Battery</th>
+            <th>Link / sensor</th>
+            <th>Rate</th>
+            <th>Gaps</th>
+            <th>Outliers</th>
+          </tr>
+        </thead>
+        <tbody id="testLatest"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <script type="module" src="app.js?v=16.4"></script>
 </body>
 </html>

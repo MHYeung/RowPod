@@ -6,7 +6,7 @@ Chrome/Edge page for single-pod logging and multi-pod overlay monitoring.
 
 GitHub Pages on the private Pro repo (static `web/ble_plotter/` only):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=12`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16`
 
 Setup: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
 
@@ -19,7 +19,13 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open **http://localhost:8080/?v=12** (not `file://`). Hard-refresh if UI looks stale.
+Open **http://localhost:8080/?v=16** (not `file://`). Hard-refresh if UI looks stale.
+
+Protocol unit tests (no browser):
+
+```sh
+node web/ble_plotter/protocol.test.js
+```
 
 ## Steps
 
@@ -29,22 +35,26 @@ Open **http://localhost:8080/?v=12** (not `file://`). Hard-refresh if UI looks s
    notification streams are paused briefly, then resumed automatically; pods
    stream concurrently after setup.
 3. Notifications start automatically; overlays use one color per pod.
-4. Pod cards show battery % (refreshed every 15 s).
+4. Pod cards show battery % (refreshed every 15 s outside an endurance test).
 5. Rename a pod to write the position name into device NVS (BLE advertised name).
 6. Use **Sync** for a software clock handshake (ms-scale CSV alignment).
 7. Calibrate the assembled pod's magnetometer before trajectory capture.
 8. Tabs:
+   - **Summary** — fleet cards + capture integrity (MTU, missing frames, drops)
    - **Plots** — overlay accel / gyro / mag
    - **Orientation** — selected-pod cube
-   - **CSV log** — tagged multi-pod samples
+   - **CSV log** — tagged multi-pod samples (CSV v6)
+   - **Battery test** — low-rate per-pod endurance/status CSV
 
 ## Protocol
 
 ### Motion
 
 - Service `9b7e1000-2b2f-4f71-9b86-4bb2e6d54f00`
-- Notify `…1001`: one or more packed 20-byte LE frames (`seq + 9×int16`)
+- Notify `…1001`: one or more packed 20-byte LE frames (`seq + 9×int16`) — v1
+- Notify `…1003`: one or more packed 22-byte LE frames (`sample_index + 9×int16`) — v16
 - Read `…1002`: scale metadata (`flags` bit0 = multi mode)
+- Dashboard v16 prefers `…1003` when capabilities advertise it
 
 ### Configuration / sync
 
@@ -55,20 +65,34 @@ Open **http://localhost:8080/?v=12** (not `file://`). Hard-refresh if UI looks s
 - Read `…2004`: battery `u16 mV LE + u8 percent + u8 flags` (bit0 = valid)
 - Read/Write `…2005`: sensor-native rate Hz (`56`, `112`, or `224`)
 - Read/Write `…2006`: workout profile (`0` general, `1` HYROX)
+- Write `…2007`: legacy 8-byte session command
+- Read/Notify `…2008`: legacy 36-byte session status
+- Read `…2009`: capabilities (formats, rates, MTU, queue depth)
+- Write `…200a`: v16 12-byte session command with command id
+- Read/Notify `…200b`: v16 56-byte status with applied rate, drain barrier,
+  32-bit sample boundaries, and queue high-water
 
 ### Rates
 
 - Connected live monitor: **56 Hz**
-- Logging: **224 Hz** (one pod) or **112 Hz** (2+ pods); CSV v3 records
-  calibration, stationary phases, and quality metrics
+- Logging: **224 Hz** (one pod) or **112 Hz** (2+ pods); CSV v6 records
+  calibration, stationary phases, quality metrics, and integrity counters
+- Capture lifecycle: `PREPARE → CONFIGURE → BIAS_START → MOTION →
+  STOP_REQUESTED → DRAIN → FINALIZE`; `FINALIZE` requires `drain_done`
 - No motion CCCD → sampling off (no IMU broadcast)
 
-The Summary tab provides fleet cards with battery/sensor health and short live
-activity plots. The HYROX tab estimates station work/rest, effort, cadence, and
-candidate repetitions; validate station thresholds against manual counts.
+The Summary tab provides fleet cards with battery/sensor health, short live
+activity plots, and a capture-integrity panel. The HYROX tab estimates station
+work/rest, effort, cadence, and candidate repetitions; validate station
+thresholds against manual counts.
+
+The Battery test tab logs loaded voltage, state, actual rate, gaps, missing
+frames, and outliers. It does not measure mAh; keep the browser visible and pair
+the log with an external current trace when assessing energy use.
 
 ## Limits
 
 - One browser gesture per newly permitted pod.
 - Practical target: 2–4 pods at 112 Hz notify.
 - Software sync compensates estimated clock offset/RTT; it is not sample-level IMU sync.
+- ATT MTU must be ≥25 to carry a single 22-byte v16 frame; preflight warns otherwise.

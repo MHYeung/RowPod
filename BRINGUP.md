@@ -63,7 +63,7 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=12` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead.
+Open `http://localhost:8080/?v=16` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead.
 
 ## Known hardware notes
 

@@ -1,10 +1,22 @@
-import { CHANNELS, RATE_LIVE_HZ, RATE_LOG_HZ, RATE_LOG_MAX_HZ } from "./protocol.js";
+import {
+  CHANNELS,
+  RATE_LIVE_HZ,
+  RATE_LOG_HZ,
+  RATE_LOG_MAX_HZ,
+  SESSION_ABORT,
+  SESSION_DRAIN,
+  SESSION_FINALIZE,
+  SESSION_PREPARE,
+  SESSION_START,
+  SESSION_STOP,
+} from "./protocol.js";
 import { MultiPlot } from "./plot.js";
 import { OrientationCube, attitudeFromSensors } from "./orientation.js";
 import { CsvLogger } from "./csv_log.js";
 import { MagCalibrationStore } from "./mag_calibration.js";
 import { HyroxSession, HYROX_PROFILE } from "./hyrox.js";
 import { PodRegistry } from "./pod_registry.js";
+import { StatusLogger } from "./status_log.js";
 
 const statusEl = document.getElementById("status");
 const rateEl = document.getElementById("rate");
@@ -35,6 +47,16 @@ const hyroxCadenceEl = document.getElementById("hyroxCadence");
 const hyroxEffortEl = document.getElementById("hyroxEffort");
 const hyroxWorkEl = document.getElementById("hyroxWork");
 const hyroxQualityEl = document.getElementById("hyroxQuality");
+const testLabelEl = document.getElementById("testLabel");
+const testIntervalEl = document.getElementById("testInterval");
+const btnTestStart = document.getElementById("btnTestStart");
+const btnTestStop = document.getElementById("btnTestStop");
+const btnTestDownload = document.getElementById("btnTestDownload");
+const btnTestClear = document.getElementById("btnTestClear");
+const testElapsedEl = document.getElementById("testElapsed");
+const testRowsEl = document.getElementById("testRows");
+const testStateEl = document.getElementById("testState");
+const testLatestEl = document.getElementById("testLatest");
 
 function setStatus(text, cls = "") {
   if (!statusEl) return;
@@ -43,8 +65,11 @@ function setStatus(text, cls = "") {
 }
 
 try {
-  if (!btnAddPod || !podListEl || !btnMagCal || !btnHyroxStart) {
-    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=12");
+  if (!btnAddPod || !podListEl || !btnMagCal || !btnHyroxStart ||
+      !btnTestStart || !btnTestStop || !btnTestDownload || !btnTestClear ||
+      !testLabelEl || !testIntervalEl || !testElapsedEl || !testRowsEl ||
+      !testStateEl || !testLatestEl || !document.getElementById("captureIntegrity")) {
+    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=16.4");
   }
 
   const plotAccel = new MultiPlot(document.getElementById("plotAccel"), ["ax", "ay", "az"], {
@@ -65,8 +90,13 @@ try {
   const magCal = new MagCalibrationStore();
   const registry = new PodRegistry();
   const hyrox = new HyroxSession();
+  const statusLogger = new StatusLogger();
   let magCalRunning = false;
   let stopPending = false;
+  let activeCaptureId = 0;
+  let captureState = "idle";
+  let statusTestTimer = null;
+  let statusCapturePending = false;
 
   for (const ch of CHANNELS) {
     const label = document.createElement("label");
@@ -97,7 +127,210 @@ try {
 
   function chooseLogRateHz() {
     const n = registry.list().filter((s) => s.status === "connected").length;
+    /* Prefer max rate over zero-loss: 1-pod 224 Hz, multi-pod 112 Hz.
+     * Sparse gaps are acceptable; STOP uses write-without-response so control
+     * traffic should still land under notify load. */
     return n <= 1 ? RATE_LOG_MAX_HZ : RATE_LOG_HZ;
+  }
+
+  function newCaptureId() {
+    const value = new Uint32Array(1);
+    crypto.getRandomValues(value);
+    return value[0] || (Date.now() >>> 0);
+  }
+
+  function capturePods() {
+    return registry.list().map((s) => ({
+      id: s.id,
+      position: s.position,
+      podId: s.podId,
+      sync: s.sync,
+      magCalibration: magCal.get(s.id),
+      protocolVersion: s.protocolVersion,
+      caps: s.caps || s.client.caps,
+    }));
+  }
+
+  function requireSessionProtocol() {
+    const missing = registry.list()
+      .filter((s) => s.status === "connected")
+      .filter((s) =>
+        !(s.client.sessionV16Char || s.client.sessionChar) ||
+        !(s.client.statusV16Char || s.client.statusChar)
+      );
+    if (missing.length) {
+      throw new Error(
+        `Session/status protocol unavailable on ${missing.map((s) => s.position).join(", ")}`
+      );
+    }
+  }
+
+  function rateMatches(status, logHz) {
+    if (!status) return false;
+    const applied = status.appliedRateHz ?? status.rateHz;
+    const requested = status.requestedRateHz ?? status.rateHz;
+    return applied === logHz || requested === logHz;
+  }
+
+  function updateIntegrityPanel() {
+    const el = document.getElementById("captureIntegrity");
+    if (!el) return;
+    const sessions = registry.list().filter((s) => s.status === "connected");
+    if (!sessions.length) {
+      el.textContent = "Connect a pod to inspect capture integrity.";
+      return;
+    }
+    el.replaceChildren();
+    for (const s of sessions) {
+      const status = s.sessionStatus || {};
+      const line = document.createElement("div");
+      line.className = "integrity-row";
+      const mtu = status.attMtu || s.caps?.attMtu || "—";
+      const hostHint = s.caps?.hostAttMtuHint;
+      const applied = status.appliedRateHz ?? status.rateHz ?? s.client.meta.rate_hz;
+      const requested = status.requestedRateHz ?? applied;
+      const mtuNote =
+        mtu === 23
+          ? hostHint && hostHint > 23
+            ? ` · MTU ${mtu} (host hint ${hostHint})`
+            : ` · MTU ${mtu} (OS/WebBT often sticks here → motion v1)`
+          : ` · MTU ${mtu}`;
+        line.textContent =
+        `${s.position}: proto v${s.protocolVersion || 1}` +
+        ` · motion ${s.client.usesV16Motion ? "v16" : "v1"} · ` +
+        `${s.rate || 0}/${applied} Hz (req ${requested}) · ` +
+        `gaps ${s.gaps || 0} · missing ${s.missingFrames || 0} · ` +
+        `q ${status.queueDepth ?? 0}/${status.queueHighWater ?? 0} · ` +
+        `drop s/t/n ${status.sensorDropped ?? 0}/` +
+        `${status.transportDropped ?? 0}/${status.notifyFailures ?? 0}` +
+        mtuNote +
+        (status.drainDone ? " · drain✓" : "");
+      el.append(line);
+    }
+  }
+
+  async function startCapture(logHz, extra = {}) {
+    requireSessionProtocol();
+    const preflight = registry.capturePreflightAll(logHz);
+    if (!preflight.ok) {
+      const detail = preflight.warnings.join("; ");
+      const proceed = window.confirm(
+        `Capture preflight warnings at ${logHz} Hz:\n${detail}\n\nContinue anyway?`
+      );
+      if (!proceed) {
+        throw new Error(`capture preflight blocked: ${detail}`);
+      }
+    }
+    const captureId = newCaptureId();
+    activeCaptureId = captureId;
+    captureState = "prepare";
+    try {
+      const prepared = await registry.sessionCommandAll(
+        SESSION_PREPARE,
+        captureId,
+        logHz
+      );
+      if (prepared.some((s) => !s || !rateMatches(s, logHz) ||
+          s.stateName !== "prepared")) {
+        throw new Error("pod rejected the requested capture rate or prepare state");
+      }
+      captureState = "configure";
+      logger.start({
+        liveRateHz: RATE_LIVE_HZ,
+        logRateHz: logHz,
+        captureId,
+        stillnessMs: 2000,
+        preflightSummary: preflight.ok
+          ? "ok"
+          : preflight.warnings.join("; "),
+        ...extra,
+        pods: capturePods(),
+      });
+      const started = await registry.sessionCommandAll(
+        SESSION_START,
+        captureId,
+        logHz
+      );
+      if (started.some((s) => !s || s.stateName !== "recording")) {
+        throw new Error("pod did not enter recording state");
+      }
+      captureState = "bias_start";
+      updateIntegrityPanel();
+      return captureId;
+    } catch (error) {
+      try {
+        await registry.sessionCommandAll(SESSION_ABORT, captureId);
+      } catch (_) {
+        /* Best-effort rollback when a pod rejected the lifecycle command. */
+      }
+      logger.stop();
+      activeCaptureId = 0;
+      captureState = "idle";
+      throw error;
+    }
+  }
+
+  async function stopCapture({ restoreProfile = false } = {}) {
+    if (!logger.recording || !activeCaptureId) return;
+    const captureId = activeCaptureId;
+    let failure = null;
+    stopPending = true;
+    captureState = "stop_requested";
+    updateLogUi();
+    try {
+      /* Acknowledge STOP before labeling bias_end — otherwise a hung Write
+       * Request leaves the logger in stop_requested forever while firmware
+       * is still recording (seen with 2 pods @ 112 Hz). */
+      const stopped = await registry.sessionCommandAll(SESSION_STOP, captureId);
+      if (stopped.some((s) => !s || s.stateName !== "stop_requested")) {
+        throw new Error("pod did not acknowledge stop request");
+      }
+      logger.beginEndStillness();
+      updateLogUi();
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      captureState = "draining";
+      logger.beginDrain();
+      updateLogUi();
+      const draining = await registry.sessionCommandAll(SESSION_DRAIN, captureId);
+      if (draining.some((s) => !s || s.stateName !== "draining")) {
+        throw new Error("pod did not enter draining state");
+      }
+      await registry.waitForDrain(captureId, { timeoutMs: 8000, pollMs: 100 });
+      updateIntegrityPanel();
+      const finalized = await registry.sessionCommandAll(
+        SESSION_FINALIZE,
+        captureId
+      );
+      if (finalized.some((s) => !s || s.stateName !== "finalized")) {
+        throw new Error("pod did not finalize capture");
+      }
+      if (finalized.some((s) => s.errorReason)) {
+        throw new Error("pod reported a finalize error");
+      }
+      logger.finalize();
+    } catch (error) {
+      failure = error;
+      try {
+        await registry.sessionCommandAll(SESSION_ABORT, captureId);
+      } catch (_) {
+        /* Keep the original failure; the link may already be unavailable. */
+      }
+    } finally {
+      logger.stop();
+      activeCaptureId = 0;
+      captureState = "idle";
+      try {
+        if (restoreProfile) await registry.setWorkoutProfileAll(0);
+        await registry.setRateAll(RATE_LIVE_HZ);
+      } catch (error) {
+        failure ||= error;
+      }
+      registry.clearIntegrityCounters();
+      stopPending = false;
+      updateLogUi();
+      updateIntegrityPanel();
+    }
+    if (failure) throw failure;
   }
 
   function updateLogUi() {
@@ -105,7 +338,7 @@ try {
     const drop = logger.droppedCount ? ` · dropped ${logger.droppedCount}` : "";
     logRowsEl.textContent = String(logger.rowCount);
     logStateEl.textContent = logger.recording
-      ? `recording @ ${chooseLogRateHz()} Hz${drop}`
+      ? `${logger.state} @ ${chooseLogRateHz()} Hz${drop}`
       : `idle (live ${RATE_LIVE_HZ} Hz)${drop}`;
     btnLogStart.disabled = n < 1 || logger.recording || stopPending;
     btnLogStop.disabled = n < 1 || !logger.recording || stopPending;
@@ -137,7 +370,95 @@ try {
       : "Connect a pod and choose a station.";
   }
 
+  function formatElapsed(seconds) {
+    const whole = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(whole / 3600)}:` +
+      `${String(Math.floor(whole / 60) % 60).padStart(2, "0")}:` +
+      `${String(whole % 60).padStart(2, "0")}`;
+  }
+
+  function statusTestSnapshots() {
+    return registry.list().map((session) => {
+      const health = sensorHealth(session);
+      return {
+        id: session.id,
+        podId: session.podId,
+        position: session.position,
+        status: session.status,
+        sensorState: session.sensorStatus,
+        health: health.text,
+        expectedRateHz: session.client.meta.rate_hz || 0,
+        observedRateHz: session.rate || 0,
+        gaps: session.gaps || 0,
+        missingFrames: session.missingFrames || 0,
+        outliers: session.outliers || 0,
+        totalFrames: session.totalFrames || 0,
+        battery: session.battery,
+        batteryReadError: session.batteryReadError,
+        sessionStatus: session.sessionStatus,
+        protocolVersion: session.protocolVersion,
+        caps: session.caps || session.client.caps,
+      };
+    });
+  }
+
+  function renderLatestStatusRows() {
+    testLatestEl.replaceChildren();
+    for (const row of statusLogger.latestByDevice()) {
+      const tr = document.createElement("tr");
+      const battery = row.batteryValid
+        ? `${row.batteryPercent}% (${(row.batteryMv / 1000).toFixed(2)} V)`
+        : row.batteryReadError ? "read failed" : "unavailable";
+      const values = [
+        row.position,
+        formatElapsed(row.elapsedSeconds),
+        battery,
+        `${row.connectionState} / ${row.sensorState}`,
+        `${row.observedRateHz}/${row.expectedRateHz} Hz`,
+        row.gaps,
+        row.outliers,
+      ];
+      for (const value of values) {
+        const td = document.createElement("td");
+        td.textContent = String(value);
+        tr.append(td);
+      }
+      testLatestEl.append(tr);
+    }
+  }
+
+  function updateStatusTestUi() {
+    const connected = registry.list().filter((s) => s.status === "connected").length;
+    testElapsedEl.textContent = formatElapsed(statusLogger.elapsedSeconds);
+    testRowsEl.textContent = String(statusLogger.rowCount);
+    testStateEl.textContent = statusLogger.recording
+      ? `${statusLogger.label || "unnamed"} · every ${statusLogger.intervalSeconds}s`
+      : statusLogger.rowCount ? "stopped" : "idle";
+    btnTestStart.disabled = connected < 1 || statusLogger.recording;
+    btnTestStop.disabled = !statusLogger.recording;
+    btnTestDownload.disabled = statusLogger.rowCount < 1;
+    btnTestClear.disabled = statusLogger.rowCount < 1 && !statusLogger.recording;
+    testLabelEl.disabled = statusLogger.recording;
+    testIntervalEl.disabled = statusLogger.recording;
+    renderLatestStatusRows();
+  }
+
+  async function captureStatusTest() {
+    if (!statusLogger.recording || statusCapturePending) return;
+    statusCapturePending = true;
+    try {
+      await registry.refreshAllBatteries();
+      await registry.refreshAllSessionStatus();
+    } catch (error) {
+      console.warn("status-test battery refresh failed", error);
+    } finally {
+      statusLogger.capture(statusTestSnapshots(), document.visibilityState);
+      statusCapturePending = false;
+    }
+  }
+
   logger.onChange = updateLogUi;
+  statusLogger.onChange = updateStatusTestUi;
 
   function battLabel(b) {
     if (!b || !b.valid) return "batt —";
@@ -145,17 +466,28 @@ try {
   }
 
   function podStatsText(s) {
+    const capture = s.sessionStatus?.stateName
+      ? ` · ${s.sessionStatus.stateName}`
+      : "";
+    const proto = s.protocolVersion ? ` · v${s.protocolVersion}` : "";
     return `${s.status} · ${s.rate || 0} Hz · gaps ${s.gaps}` +
+      ` · miss ${s.missingFrames || 0}` +
       ` · sync ${s.sync.ok ? Math.round(s.sync.rttMs) + " ms RTT" : "off"}` +
-      ` · ${battLabel(s.battery)} · outliers ${s.outliers || 0}`;
+      ` · ${battLabel(s.battery)} · outliers ${s.outliers || 0}${proto}${capture}`;
   }
 
   function sensorHealth(s) {
     if (s.status !== "connected") return { text: "disconnected", cls: "bad" };
+    if (s.sensorStatus === "paused") {
+      return { text: "peer connect hold", cls: "warn" };
+    }
     if (performance.now() - s.lastFrameAt > 1500) {
       return { text: "stale stream", cls: "bad" };
     }
-    if (s.gaps || s.outliers) return { text: "degraded", cls: "warn" };
+    /* Lifetime gaps stay in the integrity panel; health uses recent misses. */
+    if ((s.recentMissingFrames || 0) > 0 || s.outliers) {
+      return { text: "degraded", cls: "warn" };
+    }
     return { text: "stream healthy", cls: "good" };
   }
 
@@ -207,10 +539,12 @@ try {
       if (metricEl) {
         metricEl.textContent =
           `activity ${Math.round((s.activity || 0) * 100)}% · ` +
-          `frames ${s.totalFrames || 0} · outliers ${s.outliers || 0}`;
+          `frames ${s.totalFrames || 0} · missing ${s.missingFrames || 0} · ` +
+          `outliers ${s.outliers || 0}`;
       }
     }
     updateSelectedStats();
+    updateIntegrityPanel();
   }
 
   function renderPods(sessions, selectedId) {
@@ -358,8 +692,13 @@ try {
       for (const s of sessions) p.ensureSeries(s.id, s.color);
     }
     renderPods(sessions, selectedId);
+    updateStatusTestUi();
+    updateIntegrityPanel();
   };
-  registry.onStats = updatePodCardStats;
+  registry.onStats = (sessions, selectedId) => {
+    updatePodCardStats(sessions, selectedId);
+    updateStatusTestUi();
+  };
 
   registry.onFrame = (session, frame, syncedMs, quality) => {
     magCal.observe(session.id, frame.eng);
@@ -392,6 +731,10 @@ try {
       syncedMs,
       magCalibration: magCal.get(session.id),
       quality,
+      sessionStatus: session.sessionStatus,
+      missingFrames: session.missingFrames || 0,
+      gapEvents: session.gaps || 0,
+      protocolVersion: session.protocolVersion || session.client.protocolVersion,
       training: hyrox.snapshot(),
     });
     updateHyroxUi();
@@ -405,21 +748,10 @@ try {
     try {
       setStatus(`Preparing HYROX ${station} at ${logHz} Hz…`);
       await registry.setWorkoutProfileAll(HYROX_PROFILE);
-      await registry.setRateAll(logHz);
       hyrox.start(station, selected.id);
-      logger.start({
-        liveRateHz: RATE_LIVE_HZ,
-        logRateHz: logHz,
-        stillnessMs: 2000,
+      await startCapture(logHz, {
         trainingProfile: HYROX_PROFILE,
         trainingStation: station,
-        pods: registry.list().map((s) => ({
-          id: s.id,
-          position: s.position,
-          podId: s.podId,
-          sync: s.sync,
-          magCalibration: magCal.get(s.id),
-        })),
       });
       setStatus("Hold still for 2 s, then start the station", "ok");
       updateLogUi();
@@ -431,22 +763,51 @@ try {
 
   btnHyroxStop.addEventListener("click", async () => {
     if (!hyrox.active) return;
-    stopPending = true;
     hyroxStateEl.textContent = "End stillness";
-    logger.beginEndStillness();
     setStatus("Hold still for 2 s to close the HYROX set", "ok");
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    hyrox.stop();
-    logger.stop();
     try {
-      await registry.setWorkoutProfileAll(0);
-      await registry.setRateAll(RATE_LIVE_HZ);
+      await stopCapture({ restoreProfile: true });
+      hyrox.stop();
       setStatus("HYROX set saved — live monitor restored", "ok");
     } catch (e) {
       setStatus(String(e.message || e), "err");
     }
-    stopPending = false;
     updateLogUi();
+  });
+
+  btnTestStart.addEventListener("click", async () => {
+    const connected = registry.list().filter((s) => s.status === "connected").length;
+    if (!connected || statusLogger.recording) return;
+    const intervalSeconds = Number(testIntervalEl.value);
+    statusLogger.start({
+      intervalSeconds,
+      label: testLabelEl.value,
+    });
+    await captureStatusTest();
+    statusTestTimer = setInterval(captureStatusTest, intervalSeconds * 1000);
+    setStatus(
+      `Status test started for ${connected} pod${connected === 1 ? "" : "s"} ` +
+      `— sample every ${intervalSeconds}s`,
+      "ok"
+    );
+  });
+
+  btnTestStop.addEventListener("click", () => {
+    if (statusTestTimer) clearInterval(statusTestTimer);
+    statusTestTimer = null;
+    statusLogger.stop();
+    setStatus("Status test stopped — download the CSV before clearing", "ok");
+  });
+
+  btnTestDownload.addEventListener("click", () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    statusLogger.download(`c3_tracker_status_${stamp}.csv`);
+  });
+
+  btnTestClear.addEventListener("click", () => {
+    if (statusTestTimer) clearInterval(statusTestTimer);
+    statusTestTimer = null;
+    statusLogger.clear();
   });
 
   btnAddPod.addEventListener("click", async () => {
@@ -473,7 +834,12 @@ try {
   });
 
   btnDisconnect.addEventListener("click", async () => {
-    if (logger.recording) logger.stop();
+    if (logger.recording && activeCaptureId) {
+      await registry.sessionCommandAll(SESSION_ABORT, activeCaptureId).catch(() => {});
+      logger.stop();
+      activeCaptureId = 0;
+      captureState = "idle";
+    }
     for (const p of plots) {
       for (const id of [...p.series.keys()]) p.removeSeries(id);
     }
@@ -485,20 +851,8 @@ try {
   btnLogStart.addEventListener("click", async () => {
     const logHz = chooseLogRateHz();
     try {
-      setStatus(`Raising pods to ${logHz} Hz for logging…`);
-      await registry.setRateAll(logHz);
-      logger.start({
-        liveRateHz: RATE_LIVE_HZ,
-        logRateHz: logHz,
-        stillnessMs: 2000,
-        pods: registry.list().map((s) => ({
-          id: s.id,
-          position: s.position,
-          podId: s.podId,
-          sync: s.sync,
-          magCalibration: magCal.get(s.id),
-        })),
-      });
+      setStatus(`Preparing capture at ${logHz} Hz…`);
+      await startCapture(logHz);
       setStatus(`Hold completely still for 2 s — bias start`, "ok");
       setTimeout(() => {
         if (logger.recording && logger.phase === "motion" && !stopPending) {
@@ -510,19 +864,13 @@ try {
     }
   });
   btnLogStop.addEventListener("click", async () => {
-    stopPending = true;
-    logger.beginEndStillness();
-    updateLogUi();
     setStatus("Hold completely still for 2 s — bias end", "ok");
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    logger.stop();
     try {
-      await registry.setRateAll(RATE_LIVE_HZ);
+      await stopCapture();
       setStatus(`Log stopped — live monitor @ ${RATE_LIVE_HZ} Hz`);
     } catch (e) {
       setStatus(String(e.message || e), "err");
     }
-    stopPending = false;
     updateLogUi();
   });
   btnMagCal.addEventListener("click", async () => {
@@ -566,8 +914,9 @@ try {
   });
 
   setInterval(() => {
-    if (registry.list().length) {
+    if (registry.list().length && !statusLogger.recording) {
       registry.refreshAllBatteries().catch(() => {});
+      registry.refreshAllSessionStatus().catch(() => {});
       updatePodCardStats(registry.list(), registry.selectedId);
     }
   }, 15000);
@@ -575,6 +924,7 @@ try {
     if (registry.list().length) {
       updatePodCardStats(registry.list(), registry.selectedId);
     }
+    if (statusLogger.recording) updateStatusTestUi();
   }, 1000);
 
   function drawMiniPlot(canvas, history) {
@@ -621,6 +971,8 @@ try {
   }
   requestAnimationFrame(raf);
   updateLogUi();
+  updateStatusTestUi();
+  updateIntegrityPanel();
   setStatus("Ready — click Add pod");
 } catch (e) {
   console.error(e);

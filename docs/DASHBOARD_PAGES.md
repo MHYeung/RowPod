@@ -6,7 +6,7 @@ static files under `web/ble_plotter/` are deployed; firmware source stays in
 
 ## URL
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=12`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16`
 
 Chrome or Edge. Hard-refresh if scripts look stale.
 
@@ -35,7 +35,7 @@ created it earlier, and remove the old `DASHBOARD_DEPLOY_TOKEN` secret.
 | Issue | Fix |
 |-------|-----|
 | Workflow blocked / Pages permission | Settings → Pages → Source must be **GitHub Actions** |
-| 404 after green deploy | Wait 1–2 min; open the URL with `/?v=12` |
+| 404 after green deploy | Wait 1–2 min; open the URL with `/?v=16` |
 | Environment approval wait | Settings → Environments → `github-pages` → remove required reviewers if you added any |
 | Web Bluetooth fails | Must use the `https://…github.io/…` URL (or localhost), not `file://` |
 
@@ -46,4 +46,4 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=12`.
+Open `http://localhost:8080/?v=16`.

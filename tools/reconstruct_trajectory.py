@@ -140,8 +140,12 @@ def sample_vectors(rows):
 
 def quality_report(comments, rows, t):
     rate = int(rows[0]["rate_hz"])
-    seq = [int(r["seq"]) for r in rows]
-    missing = sum(((b - a) & 0xFFFF) - 1 for a, b in zip(seq, seq[1:]))
+    if "sample_index" in rows[0]:
+        seq = [int(r["sample_index"]) for r in rows]
+        missing = sum(max((b - a) - 1, 0) for a, b in zip(seq, seq[1:]))
+    else:
+        seq = [int(r["seq"]) for r in rows]
+        missing = sum(((b - a) & 0xFFFF) - 1 for a, b in zip(seq, seq[1:]))
     raw_cols = ("ax_raw", "ay_raw", "az_raw", "gx_raw", "gy_raw", "gz_raw")
     rails = sum(any(abs(int(r[c])) >= 32760 for c in raw_cols) for r in rows)
     start_still = sum(r.get("capture_phase") == "bias_start" and

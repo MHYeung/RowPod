@@ -1,20 +1,34 @@
 import {
   CFG_BATT,
+  CFG_CAPS,
   CFG_INFO,
   CFG_NAME,
   CFG_PROFILE,
   CFG_RATE,
+  CFG_SESSION,
+  CFG_SESSION_V16,
+  CFG_STATUS,
+  CFG_STATUS_V16,
   CFG_SVC,
   CFG_SYNC,
   MOTION_DATA,
+  MOTION_DATA_V16,
   MOTION_META,
   MOTION_SVC,
   RATE_LIVE_HZ,
+  SequenceTracker,
+  SESSION_COMMAND_STATE,
   decodeBatt,
+  decodeCaps,
   decodeCfgInfo,
   decodeFrames,
+  decodeFramesV16,
   decodeMeta,
+  decodeSessionStatus,
+  decodeSessionStatusV16,
   decodeSyncRsp,
+  encodeSessionCommand,
+  encodeSessionCommandV16,
 } from "./protocol.js";
 
 export class BleClient {
@@ -22,11 +36,17 @@ export class BleClient {
     this.device = null;
     this.server = null;
     this.dataChar = null;
+    this.dataV16Char = null;
     this.nameChar = null;
     this.syncChar = null;
     this.battChar = null;
     this.rateChar = null;
     this.profileChar = null;
+    this.sessionChar = null;
+    this.sessionV16Char = null;
+    this.statusChar = null;
+    this.statusV16Char = null;
+    this.capsChar = null;
     this.meta = {
       accel_lsb_per_g: 2048,
       gyro_lsb_per_dps: 16,
@@ -36,20 +56,31 @@ export class BleClient {
     };
     this.info = { mode: 0, podId: 0, hasCustomName: false };
     this.battery = { millivolts: 0, percent: 0, valid: false };
+    this.caps = null;
     this.workoutProfile = 0;
+    this.sessionStatus = null;
+    this.protocolVersion = 1;
+    this.usesV16Motion = false;
     this.advName = "";
     this.onFrame = null;
     this.onStatus = null;
+    this.onSessionStatus = null;
     this.onDisconnect = null;
-    this._lastSeq = null;
+    this._seqTracker = new SequenceTracker({ bits: 16 });
     this.gaps = 0;
+    this.missingFrames = 0;
     this._boundNotify = this._onNotify.bind(this);
+    this._boundNotifyV16 = this._onNotifyV16.bind(this);
     this._boundSync = this._onSyncNotify.bind(this);
+    this._boundSessionStatus = this._onSessionStatusNotify.bind(this);
+    this._boundSessionStatusV16 = this._onSessionStatusNotifyV16.bind(this);
     this._boundDisconnect = this._onDisconnect.bind(this);
     this._syncWaiters = [];
     this._gattQueue = Promise.resolve();
     this._stage = "idle";
     this._motionNotifications = false;
+    this._peerHold = false;
+    this._nextCommandId = 1;
   }
 
   get deviceId() {
@@ -81,6 +112,52 @@ export class BleClient {
     throw lastError;
   }
 
+  /**
+   * Firmware requests ATT MTU exchange on connect. Poll status/caps briefly so
+   * we can choose v16 motion only when a 22-byte frame actually fits.
+   * Also probe the browser's write-without-response size (often the only host
+   * MTU signal Web Bluetooth exposes on Windows).
+   */
+  async _waitForUsableMtu({ timeoutMs = 2000, pollMs = 150 } = {}) {
+    const started = performance.now();
+    while (performance.now() - started < timeoutMs) {
+      try {
+        if (this.statusV16Char || this.statusChar) {
+          await this.readSessionStatusUnlocked();
+        }
+        if (this.capsChar) {
+          this.caps = decodeCaps(await this.capsChar.readValue());
+          if (this.sessionStatus?.attMtu) {
+            this.caps = { ...this.caps, attMtu: this.sessionStatus.attMtu };
+          }
+        }
+      } catch (_) {
+        /* Status may not be ready yet during early GATT setup. */
+      }
+      const hostHint = this._hostAttMtuHint();
+      if (hostHint && this.caps) {
+        this.caps = { ...this.caps, hostAttMtuHint: hostHint };
+      }
+      const mtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
+      if (mtu >= 25) return mtu;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    return this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
+  }
+
+  /** Best-effort host MTU hint; Web Bluetooth has no direct ATT MTU API. */
+  _hostAttMtuHint() {
+    try {
+      const write = this.nameChar?.maxWriteWithoutResponseSize;
+      if (typeof write === "number" && write > 0) {
+        return write + 3;
+      }
+    } catch (_) {
+      /* Characteristic may not expose the property on all browsers. */
+    }
+    return null;
+  }
+
   async connect(options = {}) {
     let stage = "requestDevice";
     const setStage = (value) => {
@@ -103,7 +180,7 @@ export class BleClient {
       this.advName = this.device.name || "";
       this.device.addEventListener("gattserverdisconnected", this._boundDisconnect);
       if (options.beforeGattConnect) {
-        setStage("pausing existing pod streams");
+        setStage("holding existing pod streams");
         await options.beforeGattConnect();
       }
       setStage("gatt.connect");
@@ -113,6 +190,11 @@ export class BleClient {
       const motion = await this.server.getPrimaryService(MOTION_SVC);
       this.dataChar = await motion.getCharacteristic(MOTION_DATA);
       const metaChar = await motion.getCharacteristic(MOTION_META);
+      try {
+        this.dataV16Char = await motion.getCharacteristic(MOTION_DATA_V16);
+      } catch (_) {
+        this.dataV16Char = null;
+      }
       setStage("read motion metadata");
       const metaView = await metaChar.readValue();
       this.meta = { ...this.meta, ...decodeMeta(metaView) };
@@ -140,6 +222,54 @@ export class BleClient {
         } catch (_) {
           this.profileChar = null;
         }
+        try {
+          this.capsChar = await cfg.getCharacteristic(CFG_CAPS);
+          this.caps = decodeCaps(await this.capsChar.readValue());
+          this.protocolVersion = this.caps.firmwareProto || 2;
+        } catch (_) {
+          this.capsChar = null;
+          this.caps = null;
+          this.protocolVersion = 1;
+        }
+        try {
+          this.sessionV16Char = await cfg.getCharacteristic(CFG_SESSION_V16);
+        } catch (_) {
+          this.sessionV16Char = null;
+        }
+        try {
+          this.sessionChar = await cfg.getCharacteristic(CFG_SESSION);
+        } catch (_) {
+          this.sessionChar = null;
+        }
+        try {
+          this.statusV16Char = await cfg.getCharacteristic(CFG_STATUS_V16);
+          await this.statusV16Char.startNotifications();
+          this.statusV16Char.addEventListener(
+            "characteristicvaluechanged",
+            this._boundSessionStatusV16
+          );
+          this.sessionStatus = decodeSessionStatusV16(
+            await this.statusV16Char.readValue()
+          );
+        } catch (_) {
+          this.statusV16Char = null;
+        }
+        if (!this.statusV16Char) {
+          try {
+            this.statusChar = await cfg.getCharacteristic(CFG_STATUS);
+            await this.statusChar.startNotifications();
+            this.statusChar.addEventListener(
+              "characteristicvaluechanged",
+              this._boundSessionStatus
+            );
+            this.sessionStatus = decodeSessionStatus(
+              await this.statusChar.readValue()
+            );
+          } catch (_) {
+            this.statusChar = null;
+            this.sessionStatus = null;
+          }
+        }
         setStage("read pod configuration");
         const infoView = await infoChar.readValue();
         this.info = decodeCfgInfo(infoView);
@@ -152,20 +282,41 @@ export class BleClient {
         await this.readBattery();
         setStage("set live rate");
         await this.setRate(RATE_LIVE_HZ);
+        setStage("wait for ATT MTU");
+        await this._waitForUsableMtu();
       } catch (e) {
         console.warn(`optional config setup failed at ${stage}`, e);
       }
 
+      const attMtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
+      /* 22-byte v16 frames need ATT MTU >= 25 (3-byte ATT header + 22). */
+      this.usesV16Motion = Boolean(
+        this.dataV16Char && this.caps?.supportsV16 && attMtu >= 25
+      );
+      this._seqTracker = new SequenceTracker({
+        bits: this.usesV16Motion ? 32 : 16,
+      });
+
       this._setStatus(
-        `Connected · ${this.advName || "pod"} · meta v${this.meta.ver} @ ${this.meta.rate_hz} Hz`,
+        `Connected · ${this.advName || "pod"} · proto v${this.protocolVersion}` +
+          ` · motion ${this.usesV16Motion ? "v16" : "v1"} · MTU ${attMtu}` +
+          ` · meta v${this.meta.ver} @ ${this.meta.rate_hz} Hz`,
         "ok"
       );
 
-      this._lastSeq = null;
       this.gaps = 0;
+      this.missingFrames = 0;
       setStage("subscribe motion");
-      await this.dataChar.startNotifications();
-      this.dataChar.addEventListener("characteristicvaluechanged", this._boundNotify);
+      if (this.usesV16Motion) {
+        await this.dataV16Char.startNotifications();
+        this.dataV16Char.addEventListener(
+          "characteristicvaluechanged",
+          this._boundNotifyV16
+        );
+      } else {
+        await this.dataChar.startNotifications();
+        this.dataChar.addEventListener("characteristicvaluechanged", this._boundNotify);
+      }
       this._motionNotifications = true;
       this._stage = "ready";
     } catch (error) {
@@ -203,6 +354,15 @@ export class BleClient {
     });
   }
 
+  async readCaps() {
+    return this._queueGatt(async () => {
+      if (!this.capsChar) return this.caps;
+      this.caps = decodeCaps(await this.capsChar.readValue());
+      this.protocolVersion = this.caps.firmwareProto || 2;
+      return this.caps;
+    });
+  }
+
   /** @param {56|112|224} hz */
   async setRate(hz) {
     return this._queueGatt(async () => {
@@ -227,6 +387,109 @@ export class BleClient {
       }
       this.workoutProfile = profile;
     });
+  }
+
+  async readSessionStatus() {
+    return this._queueGatt(async () => {
+      try {
+        return await Promise.race([
+          this.readSessionStatusUnlocked(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("status read timeout")), 800)
+          ),
+        ]);
+      } catch (error) {
+        /* Prefer last notified status over wedging the GATT queue. */
+        if (this.sessionStatus) return this.sessionStatus;
+        throw error;
+      }
+    });
+  }
+
+  async sendSessionCommand(command, captureId, rateHz = 0, flags = 0) {
+    return this._queueGatt(async () => {
+      const expectState = SESSION_COMMAND_STATE[command] || null;
+      if (this.sessionV16Char) {
+        const commandId = this._nextCommandId++ & 0xffff || 1;
+        const value = encodeSessionCommandV16(
+          command,
+          captureId,
+          rateHz,
+          flags,
+          commandId
+        );
+        /* Write Command (no response): Write Request hangs under dual-pod
+         * notify load on Windows/Chrome and never delivers STOP/DRAIN. */
+        if (this.sessionV16Char.writeValueWithoutResponse) {
+          await this.sessionV16Char.writeValueWithoutResponse(value);
+        } else if (this.sessionV16Char.writeValueWithResponse) {
+          await this.sessionV16Char.writeValueWithResponse(value);
+        } else {
+          await this.sessionV16Char.writeValue(value);
+        }
+      } else if (this.sessionChar) {
+        const value = encodeSessionCommand(command, captureId, rateHz, flags);
+        if (this.sessionChar.writeValueWithoutResponse) {
+          await this.sessionChar.writeValueWithoutResponse(value);
+        } else if (this.sessionChar.writeValueWithResponse) {
+          await this.sessionChar.writeValueWithResponse(value);
+        } else {
+          await this.sessionChar.writeValue(value);
+        }
+      } else {
+        throw new Error("session command characteristic missing");
+      }
+      return await this._awaitSessionState(expectState, 4000);
+    });
+  }
+
+  /**
+   * Prefer status notifications; fall back to short timed reads so a stalled
+   * ATT Read cannot wedge the capture lifecycle forever.
+   */
+  async _awaitSessionState(expectState, timeoutMs = 4000) {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+      if (!expectState || this.sessionStatus?.stateName === expectState) {
+        return this.sessionStatus;
+      }
+      try {
+        await Promise.race([
+          this.readSessionStatusUnlocked(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("status read timeout")), 400)
+          ),
+        ]);
+      } catch (_) {
+        /* Notify may still update sessionStatus asynchronously. */
+      }
+      if (!expectState || this.sessionStatus?.stateName === expectState) {
+        return this.sessionStatus;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    if (expectState) {
+      throw new Error(
+        `session command timeout waiting for ${expectState}` +
+          ` (have ${this.sessionStatus?.stateName || "none"})`
+      );
+    }
+    return this.sessionStatus;
+  }
+
+  async readSessionStatusUnlocked() {
+    if (this.statusV16Char) {
+      this.sessionStatus = decodeSessionStatusV16(
+        await this.statusV16Char.readValue()
+      );
+      if (this.sessionStatus?.appliedRateHz) {
+        this.meta.rate_hz = this.sessionStatus.appliedRateHz;
+      }
+      return this.sessionStatus;
+    }
+    if (!this.statusChar) return null;
+    this.sessionStatus = decodeSessionStatus(await this.statusChar.readValue());
+    return this.sessionStatus;
   }
 
   /**
@@ -265,17 +528,29 @@ export class BleClient {
 
   async disconnect() {
     return this._queueGatt(async () => {
-      if (this.dataChar) {
-        try {
-          this.dataChar.removeEventListener("characteristicvaluechanged", this._boundNotify);
-          await this.dataChar.stopNotifications();
-        } catch (_) { /* ignore */ }
-      }
-      this._motionNotifications = false;
+      await this._stopMotionNotifications();
       if (this.syncChar) {
         try {
           this.syncChar.removeEventListener("characteristicvaluechanged", this._boundSync);
           await this.syncChar.stopNotifications();
+        } catch (_) { /* ignore */ }
+      }
+      if (this.statusChar) {
+        try {
+          this.statusChar.removeEventListener(
+            "characteristicvaluechanged",
+            this._boundSessionStatus
+          );
+          await this.statusChar.stopNotifications();
+        } catch (_) { /* ignore */ }
+      }
+      if (this.statusV16Char) {
+        try {
+          this.statusV16Char.removeEventListener(
+            "characteristicvaluechanged",
+            this._boundSessionStatusV16
+          );
+          await this.statusV16Char.stopNotifications();
         } catch (_) { /* ignore */ }
       }
       if (this.device?.gatt?.connected) {
@@ -286,39 +561,107 @@ export class BleClient {
     });
   }
 
+  async _stopMotionNotifications() {
+    if (this.usesV16Motion && this.dataV16Char) {
+      try {
+        this.dataV16Char.removeEventListener(
+          "characteristicvaluechanged",
+          this._boundNotifyV16
+        );
+        await this.dataV16Char.stopNotifications();
+      } catch (_) { /* ignore */ }
+    } else if (this.dataChar) {
+      try {
+        this.dataChar.removeEventListener("characteristicvaluechanged", this._boundNotify);
+        await this.dataChar.stopNotifications();
+      } catch (_) { /* ignore */ }
+    }
+    this._motionNotifications = false;
+  }
+
   async pauseNotifications() {
     return this._queueGatt(async () => {
-      if (!this.dataChar || !this._motionNotifications) return false;
-      this.dataChar.removeEventListener("characteristicvaluechanged", this._boundNotify);
-      await this.dataChar.stopNotifications();
-      this._motionNotifications = false;
+      if (!this._motionNotifications) return false;
+      await this._stopMotionNotifications();
       return true;
     });
   }
 
   async resumeNotifications() {
     return this._queueGatt(async () => {
-      if (!this.dataChar || this._motionNotifications) return false;
-      await this.dataChar.startNotifications();
-      this.dataChar.addEventListener("characteristicvaluechanged", this._boundNotify);
+      if (this._motionNotifications) return false;
+      if (this.usesV16Motion && this.dataV16Char) {
+        await this.dataV16Char.startNotifications();
+        this.dataV16Char.addEventListener(
+          "characteristicvaluechanged",
+          this._boundNotifyV16
+        );
+      } else if (this.dataChar) {
+        await this.dataChar.startNotifications();
+        this.dataChar.addEventListener("characteristicvaluechanged", this._boundNotify);
+      } else {
+        return false;
+      }
       this._motionNotifications = true;
+      this.resyncSequence();
       return true;
     });
+  }
+
+  /**
+   * Soft hold: keep CCCD subscribed so firmware keeps sampling (no sequence
+   * gap / stale UI), but ignore gap accounting during peer-pod connect.
+   */
+  beginPeerHold() {
+    this._peerHold = true;
+  }
+
+  endPeerHold() {
+    this._peerHold = false;
+    this.resyncSequence();
+  }
+
+  resyncSequence() {
+    const bits = this._seqTracker?.bits || (this.usesV16Motion ? 32 : 16);
+    this._seqTracker = new SequenceTracker({ bits });
+    this.gaps = 0;
+    this.missingFrames = 0;
+  }
+
+  _emitFrames(frames) {
+    for (const frame of frames) {
+      if (this._peerHold) {
+        /* Keep UI fresh during peer connect; do not accumulate false gaps. */
+        if (this.onFrame) {
+          this.onFrame({ ...frame, missing: 0 }, this.gaps, this.missingFrames);
+        }
+        continue;
+      }
+      const tracked = this._seqTracker.observe(frame.sampleIndex ?? frame.seq);
+      this.gaps = this._seqTracker.gapEvents;
+      this.missingFrames = this._seqTracker.missingFrames;
+      const enriched = {
+        ...frame,
+        sampleIndex: tracked.logical,
+        missing: tracked.missing,
+      };
+      if (this.onFrame) this.onFrame(enriched, this.gaps, this.missingFrames);
+    }
   }
 
   _onNotify(ev) {
     const view = ev.target.value;
     try {
-      for (const frame of decodeFrames(view, this.meta)) {
-        if (this._lastSeq !== null) {
-          const expect = (this._lastSeq + 1) & 0xffff;
-          if (frame.seq !== expect) {
-            this.gaps += 1;
-          }
-        }
-        this._lastSeq = frame.seq;
-        if (this.onFrame) this.onFrame(frame, this.gaps);
-      }
+      this._emitFrames(decodeFrames(view, this.meta));
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  _onNotifyV16(ev) {
+    const view = ev.target.value;
+    try {
+      this._emitFrames(decodeFramesV16(view, this.meta));
     } catch (e) {
       console.warn(e);
     }
@@ -334,6 +677,30 @@ export class BleClient {
     }
   }
 
+  _onSessionStatusNotify(ev) {
+    try {
+      this.sessionStatus = decodeSessionStatus(ev.target.value);
+      if (this.onSessionStatus) this.onSessionStatus(this.sessionStatus);
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  _onSessionStatusNotifyV16(ev) {
+    try {
+      this.sessionStatus = decodeSessionStatusV16(ev.target.value);
+      if (this.sessionStatus?.appliedRateHz) {
+        this.meta.rate_hz = this.sessionStatus.appliedRateHz;
+      }
+      if (this.caps && this.sessionStatus?.attMtu) {
+        this.caps = { ...this.caps, attMtu: this.sessionStatus.attMtu };
+      }
+      if (this.onSessionStatus) this.onSessionStatus(this.sessionStatus);
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
   _onDisconnect() {
     this._cleanup();
     this._setStatus("Disconnected (link lost)", "err");
@@ -344,12 +711,31 @@ export class BleClient {
     if (this.device) {
       this.device.removeEventListener("gattserverdisconnected", this._boundDisconnect);
     }
+    if (this.statusChar) {
+      this.statusChar.removeEventListener(
+        "characteristicvaluechanged",
+        this._boundSessionStatus
+      );
+    }
+    if (this.statusV16Char) {
+      this.statusV16Char.removeEventListener(
+        "characteristicvaluechanged",
+        this._boundSessionStatusV16
+      );
+    }
     this.dataChar = null;
+    this.dataV16Char = null;
     this.nameChar = null;
     this.syncChar = null;
     this.battChar = null;
     this.rateChar = null;
     this.profileChar = null;
+    this.sessionChar = null;
+    this.sessionV16Char = null;
+    this.statusChar = null;
+    this.statusV16Char = null;
+    this.capsChar = null;
+    this.sessionStatus = null;
     this.server = null;
     this._motionNotifications = false;
     while (this._syncWaiters.length) {

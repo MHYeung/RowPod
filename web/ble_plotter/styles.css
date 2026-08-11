@@ -20,7 +20,7 @@ body {
 header h1 { margin: 0; font-size: 1.4rem; }
 .sub { margin: 0.25rem 0 1rem; color: var(--muted); }
 .controls, .stats, .toggles, .log-controls, .pods, .summary-kpis,
-.hyrox-controls, .hyrox-kpis {
+.hyrox-controls, .hyrox-kpis, .test-controls, .test-kpis {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
@@ -30,11 +30,11 @@ header h1 { margin: 0; font-size: 1.4rem; }
 .pods {
   align-items: stretch;
 }
-.summary-kpis, .hyrox-kpis {
+.summary-kpis, .hyrox-kpis, .test-kpis {
   color: var(--muted);
   font-size: 0.95rem;
 }
-.summary-kpis strong, .hyrox-kpis strong { color: var(--text); }
+.summary-kpis strong, .hyrox-kpis strong, .test-kpis strong { color: var(--text); }
 .pod-card {
   background: var(--panel);
   border: 1px solid #2c3a4f;
@@ -122,19 +122,46 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .status { color: var(--muted); }
 .status.ok { color: var(--green); }
 .status.err { color: var(--danger); }
-.hyrox-controls label {
+.hyrox-controls label, .test-controls label {
   display: inline-flex;
   gap: 0.4rem;
   align-items: center;
   color: var(--muted);
 }
-select {
+select, .test-controls input {
   background: #101820;
   color: var(--text);
   border: 1px solid #2c3a4f;
   border-radius: 8px;
   padding: 0.45rem 0.6rem;
 }
+.test-controls input { min-width: 12rem; }
+.test-table-wrap {
+  overflow-x: auto;
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+.test-table {
+  border-collapse: collapse;
+  min-width: 45rem;
+  width: 100%;
+  font-size: 0.85rem;
+}
+.test-table caption {
+  caption-side: top;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: left;
+  margin-bottom: 0.5rem;
+}
+.test-table th, .test-table td {
+  border-bottom: 1px solid #2c3a4f;
+  padding: 0.45rem;
+  text-align: left;
+  white-space: nowrap;
+}
+.test-table th { color: var(--muted); font-weight: 600; }
 .stats { color: var(--muted); font-size: 0.95rem; }
 .stats strong { color: var(--text); }
 
@@ -186,4 +213,24 @@ canvas {
   align-items: center;
   font-size: 0.85rem;
   color: var(--muted);
+}
+.integrity {
+  background: var(--panel);
+  border: 1px solid #2c3a4f;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+.integrity h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+.integrity-body {
+  color: var(--muted);
+  font-size: 0.85rem;
+  display: grid;
+  gap: 0.35rem;
+}
+.integrity-row {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
