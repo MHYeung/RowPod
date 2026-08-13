@@ -1,15 +1,26 @@
 :root {
-  --bg: #0f1419;
-  --panel: #1a2332;
-  --text: #e7ecf3;
-  --muted: #8b9bb4;
-  --accent: #3d9cf0;
-  --green: #3dd68c;
-  --blue: #5b8def;
-  --danger: #f07178;
+  color-scheme: light;
+  --brand-ink: #392d37;
+  --brand-paper: #edf1e2;
+  --brand-soft: #e8ecdd;
+  --brand-muted: #e4e8d9;
+  --brand-depth: #e0e4d5;
+  --bg: var(--brand-depth);
+  --panel: var(--brand-paper);
+  --surface: var(--brand-soft);
+  --text: var(--brand-ink);
+  --muted: #6f6870;
+  --border: #c5cabb;
+  --accent: var(--brand-ink);
+  --instrument: var(--brand-ink);
+  --green: #26734d;
+  --blue: #315f8c;
+  --danger: #a33c46;
+  --warning: #945b17;
 }
 
 * { box-sizing: border-box; }
+::selection { background: var(--brand-ink); color: var(--brand-paper); }
 body {
   margin: 0;
   font-family: "Segoe UI", system-ui, sans-serif;
@@ -37,7 +48,7 @@ header h1 { margin: 0; font-size: 1.4rem; }
 .summary-kpis strong, .hyrox-kpis strong, .test-kpis strong { color: var(--text); }
 .pod-card {
   background: var(--panel);
-  border: 1px solid #2c3a4f;
+  border: 1px solid var(--border);
   border-left-width: 4px;
   border-radius: 10px;
   padding: 0.75rem;
@@ -67,7 +78,7 @@ header h1 { margin: 0; font-size: 1.4rem; }
   margin: 0.35rem 0;
 }
 .health.good { color: var(--green); }
-.health.warn { color: #f0a030; }
+.health.warn { color: var(--warning); }
 .health.bad { color: var(--danger); }
 meter {
   width: 5rem;
@@ -77,10 +88,11 @@ meter {
 .mini-plot-wrap {
   margin: 0.55rem 0;
   padding: 0.35rem 0.45rem 0.45rem;
-  background: #101820;
+  background: var(--instrument);
   border-radius: 6px;
 }
 .mini-plot-wrap figcaption {
+  color: var(--brand-muted);
   font-size: 0.72rem;
   margin-bottom: 0.2rem;
 }
@@ -102,23 +114,33 @@ meter {
   align-items: center;
 }
 .pod-actions input[type="text"] {
-  background: #101820;
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid #2c3a4f;
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.4rem 0.6rem;
   min-width: 10rem;
 }
 button {
-  background: var(--panel);
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid #2c3a4f;
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.45rem 0.9rem;
   cursor: pointer;
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
+button:hover:not(:disabled) { background: var(--brand-muted); border-color: var(--accent); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+#btnAddPod {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--brand-paper);
+}
+#btnAddPod:hover:not(:disabled) { background: #51414d; border-color: #51414d; }
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 3px solid #9d8d97;
+  outline-offset: 2px;
+}
 .status { color: var(--muted); }
 .status.ok { color: var(--green); }
 .status.err { color: var(--danger); }
@@ -129,9 +151,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   color: var(--muted);
 }
 select, .test-controls input {
-  background: #101820;
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid #2c3a4f;
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.45rem 0.6rem;
 }
@@ -156,7 +178,7 @@ select, .test-controls input {
   margin-bottom: 0.5rem;
 }
 .test-table th, .test-table td {
-  border-bottom: 1px solid #2c3a4f;
+  border-bottom: 1px solid var(--border);
   padding: 0.45rem;
   text-align: left;
   white-space: nowrap;
@@ -169,7 +191,7 @@ select, .test-controls input {
   display: flex;
   gap: 0.35rem;
   margin: 1rem 0 1rem;
-  border-bottom: 1px solid #2c3a4f;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 0.5rem;
 }
 .tab {
@@ -178,7 +200,8 @@ select, .test-controls input {
 }
 .tab.active {
   border-color: var(--accent);
-  color: var(--accent);
+  background: var(--accent);
+  color: var(--brand-paper);
 }
 .tab-panel[hidden] { display: none; }
 .hint {
@@ -200,7 +223,7 @@ canvas {
   max-width: 900px;
   height: auto;
   display: block;
-  background: #101820;
+  background: var(--instrument);
   border-radius: 6px;
 }
 #plotCube {
@@ -216,7 +239,7 @@ canvas {
 }
 .integrity {
   background: var(--panel);
-  border: 1px solid #2c3a4f;
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;

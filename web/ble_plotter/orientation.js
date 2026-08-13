@@ -139,7 +139,7 @@ export class OrientationCube {
       const cyF = face.idx.reduce((s, i) => s + projected[i].y, 0) / 4;
       const czF = face.idx.reduce((s, i) => s + projected[i].z, 0) / 4;
       if (czF > -0.2) {
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = "#edf1e2";
         ctx.font = "bold 13px Segoe UI, system-ui, sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -147,7 +147,7 @@ export class OrientationCube {
       }
     }
 
-    ctx.fillStyle = "#c5d0e0";
+    ctx.fillStyle = "#e0e4d5";
     ctx.font = "13px Segoe UI, system-ui, sans-serif";
     ctx.textAlign = "left";
     ctx.textBaseline = "top";

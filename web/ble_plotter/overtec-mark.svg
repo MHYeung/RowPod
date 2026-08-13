@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 320" role="img" aria-labelledby="title">
+  <title id="title">OVERTEC geometric mark</title>
+  <g fill="none" stroke="#392d37" stroke-width="4" stroke-linecap="square">
+    <path d="M46 16H210M128 16V170" />
+    <circle cx="128" cy="150" r="76" />
+    <path d="M33 84L128 226 223 84" />
+    <path d="M92 248H164M70 274H186M50 304H206" />
+  </g>
+</svg>

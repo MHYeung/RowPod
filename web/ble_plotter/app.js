@@ -932,7 +932,7 @@ try {
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = "#2c3a4f";
+    ctx.strokeStyle = "#655862";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, h - 1);

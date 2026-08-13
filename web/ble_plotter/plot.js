@@ -3,6 +3,9 @@ const PAD_L = 48;
 const PAD_R = 8;
 const PAD_T = 8;
 const PAD_B = 8;
+const PLOT_GRID = "#5f535d";
+const PLOT_ZERO = "#7c707a";
+const PLOT_TEXT = "#e0e4d5";
 
 export class MultiPlot {
   /**
@@ -118,20 +121,20 @@ export class MultiPlot {
       const frac = t / (this.tickCount - 1);
       const val = max - frac * span;
       const y = PAD_T + frac * plotH;
-      ctx.strokeStyle = "#243044";
+      ctx.strokeStyle = PLOT_GRID;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(PAD_L, y);
       ctx.lineTo(w - PAD_R, y);
       ctx.stroke();
-      ctx.fillStyle = "#8b9bb4";
+      ctx.fillStyle = PLOT_TEXT;
       const label = Math.abs(val) >= 100 ? val.toFixed(0) : val.toFixed(2);
       ctx.fillText(label, PAD_L - 6, y);
     }
 
     if (min < 0 && max > 0) {
       const y0 = PAD_T + ((max - 0) / span) * plotH;
-      ctx.strokeStyle = "#3a4a63";
+      ctx.strokeStyle = PLOT_ZERO;
       ctx.beginPath();
       ctx.moveTo(PAD_L, y0);
       ctx.lineTo(w - PAD_R, y0);
@@ -159,7 +162,7 @@ export class MultiPlot {
     ctx.globalAlpha = 1;
 
     if (this.unit) {
-      ctx.fillStyle = "#8b9bb4";
+      ctx.fillStyle = PLOT_TEXT;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
       ctx.fillText(this.unit, PAD_L + 4, 2);
