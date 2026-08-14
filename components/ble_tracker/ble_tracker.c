@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "host/ble_hs.h"
+#include "host/ble_gap.h"
 #include "host/ble_att.h"
 #include "host/ble_uuid.h"
 #include "host/util/util.h"
@@ -120,8 +121,11 @@ static uint32_t s_session_transport_base;
 static uint32_t s_session_notify_base;
 static uint8_t s_epoch_rate_hz;
 
-#define FRAME_QUEUE_DEPTH 96
-#define BATCH_MAX_FRAMES   8
+#define FRAME_QUEUE_DEPTH     96
+#define BATCH_MAX_FRAMES       8 /* live 56 Hz; MTU may pack this many */
+#define BATCH_CAPTURE_FRAMES   2 /* 224 Hz: smaller atomic loss per drop */
+#define CONN_ITVL_MAX_FAST    12 /* 15 ms in 1.25 ms units */
+#define CONN_UPDATE_MAX_TRIES  3
 
 static struct ble_npl_event s_notify_ev;
 static sensor_proto_sample_t s_frame_queue[FRAME_QUEUE_DEPTH];
@@ -132,6 +136,8 @@ static uint16_t s_frame_tail;
 static uint16_t s_frame_count;
 static uint16_t s_att_mtu = BLE_ATT_MTU_DFLT;
 static uint8_t s_retry_count;
+static bool s_notify_inflight;
+static uint8_t s_conn_update_tries;
 static uint32_t s_transport_dropped;
 static uint32_t s_notify_failures;
 
@@ -145,6 +151,44 @@ static void frame_queue_reset(void);
 static void maybe_complete_drain(void);
 static int handle_session_command(uint8_t command, uint32_t capture_id,
                                   uint8_t rate_hz, uint16_t command_id);
+static void request_fast_conn_params(void);
+static uint8_t current_batch_limit(void);
+static bool session_capture_active(void);
+
+static void request_fast_conn_params(void)
+{
+    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+    if (s_conn_update_tries >= CONN_UPDATE_MAX_TRIES) {
+        return;
+    }
+    const struct ble_gap_upd_params fast = {
+        .itvl_min = 6,  /* 7.5 ms */
+        .itvl_max = CONN_ITVL_MAX_FAST,
+        .latency = 0,
+        .supervision_timeout = 400,
+        .min_ce_len = 6,
+        .max_ce_len = 24, /* longer CE so 2-frame notifies drain */
+    };
+    int rc = ble_gap_update_params(s_conn_handle, &fast);
+    if (rc == 0 || rc == BLE_HS_EALREADY) {
+        s_conn_update_tries++;
+        ESP_LOGI(TAG, "requested 7.5-15 ms interval try=%u",
+                 (unsigned)s_conn_update_tries);
+    } else {
+        ESP_LOGW(TAG, "connection interval request rc=%d", rc);
+    }
+}
+
+static uint8_t current_batch_limit(void)
+{
+    if (session_capture_active() &&
+        sensor_stream_get_rate_hz() >= SENSOR_PROTO_RATE_LOG_MAX_HZ) {
+        return BATCH_CAPTURE_FRAMES;
+    }
+    return BATCH_MAX_FRAMES;
+}
 
 static void deinit_stack_after_init_failure(void)
 {
@@ -493,6 +537,8 @@ static int handle_session_command(uint8_t command, uint32_t capture_id,
         s_session_transport_base = s_transport_dropped;
         s_session_notify_base = s_notify_failures;
         frame_queue_reset();
+        s_conn_update_tries = 0;
+        request_fast_conn_params();
     } else if (command == SENSOR_PROTO_SESSION_START) {
         if (s_session_state != SENSOR_PROTO_STATE_PREPARED ||
             capture_id != s_capture_id ||
@@ -919,6 +965,7 @@ static void frame_queue_reset(void)
     s_frame_tail = 0;
     s_frame_count = 0;
     s_retry_count = 0;
+    s_notify_inflight = false;
     taskEXIT_CRITICAL(&s_frame_mux);
 }
 
@@ -967,10 +1014,11 @@ static uint8_t prepare_retry_batch(uint8_t frame_len)
     }
     uint16_t payload_len = s_att_mtu > 3 ? (uint16_t)(s_att_mtu - 3) : frame_len;
     uint8_t max_frames = (uint8_t)(payload_len / frame_len);
+    uint8_t batch_limit = current_batch_limit();
     if (max_frames < 1) {
         max_frames = 1;
-    } else if (max_frames > BATCH_MAX_FRAMES) {
-        max_frames = BATCH_MAX_FRAMES;
+    } else if (max_frames > batch_limit) {
+        max_frames = batch_limit;
     }
 
     taskENTER_CRITICAL(&s_frame_mux);
@@ -1020,9 +1068,8 @@ static bool notify_batch(uint16_t val_handle, bool use_v16)
         /* Keep retry batch; caller re-arms while retry/queue remain. */
         return true;
     }
-
-    s_last_sent = s_retry_batch[frame_count - 1].sample_index;
-    s_retry_count = 0;
+    /* Keep the batch until NOTIFY_TX: queued != delivered. */
+    s_notify_inflight = true;
     return true;
 }
 
@@ -1030,6 +1077,9 @@ static void notify_ev_cb(struct ble_npl_event *ev)
 {
     (void)ev;
     if (!s_notify_enabled || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+    if (s_notify_inflight) {
         return;
     }
 
@@ -1046,6 +1096,9 @@ static void notify_ev_cb(struct ble_npl_event *ev)
     if (!sent) {
         maybe_complete_drain();
         return;
+    }
+    if (s_notify_inflight) {
+        return; /* wait for TX complete before the next batch */
     }
 
     taskENTER_CRITICAL(&s_frame_mux);
@@ -1132,20 +1185,11 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
             s_att_mtu = BLE_ATT_MTU_DFLT;
+            s_conn_update_tries = 0;
+            s_notify_inflight = false;
             frame_queue_reset();
-            const struct ble_gap_upd_params fast = {
-                .itvl_min = 6,  /* 7.5 ms */
-                .itvl_max = 12, /* 15 ms */
-                .latency = 0,
-                .supervision_timeout = 400,
-                .min_ce_len = 0,
-                .max_ce_len = 0,
-            };
-            int rc = ble_gap_update_params(s_conn_handle, &fast);
-            if (rc != 0) {
-                ESP_LOGW(TAG, "connection interval request rc=%d", rc);
-            }
-            rc = ble_gap_set_data_len(s_conn_handle, 251, 2120);
+            request_fast_conn_params();
+            int rc = ble_gap_set_data_len(s_conn_handle, 251, 2120);
             if (rc != 0) {
                 ESP_LOGW(TAG, "data length request rc=%d", rc);
             }
@@ -1196,6 +1240,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         s_session_first_valid = false;
         s_accept_transport = true;
         s_drain_complete = false;
+        s_notify_inflight = false;
         sensor_stream_set_enabled(false);
         if (start_advertise() != ESP_OK) {
             ESP_LOGE(TAG, "failed to advertise after disconnect");
@@ -1234,6 +1279,46 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                  event->mtu.conn_handle, event->mtu.value);
         notify_session_status();
         break;
+    case BLE_GAP_EVENT_CONN_UPDATE: {
+        struct ble_gap_conn_desc desc;
+        int rc = ble_gap_conn_find(event->conn_update.conn_handle, &desc);
+        if (rc == 0) {
+            ESP_LOGI(TAG, "conn update status=%d itvl=%u (x1.25ms) latency=%u",
+                     event->conn_update.status, desc.conn_itvl,
+                     desc.conn_latency);
+            if (event->conn_update.status == 0 &&
+                desc.conn_itvl > CONN_ITVL_MAX_FAST) {
+                request_fast_conn_params();
+            }
+        }
+        break;
+    }
+    case BLE_GAP_EVENT_NOTIFY_TX: {
+        uint16_t handle = event->notify_tx.attr_handle;
+        if (handle != s_data_val_handle && handle != s_data_v16_val_handle) {
+            break;
+        }
+        s_notify_inflight = false;
+        if (event->notify_tx.status == 0 ||
+            event->notify_tx.status == BLE_HS_EDONE) {
+            if (s_retry_count > 0) {
+                s_last_sent = s_retry_batch[s_retry_count - 1].sample_index;
+                s_retry_count = 0;
+            }
+        } else {
+            s_notify_failures++;
+            if ((s_notify_failures % 100) == 1) {
+                ESP_LOGW(TAG, "notify_tx status=%d failures=%" PRIu32,
+                         event->notify_tx.status, s_notify_failures);
+            }
+        }
+        if (s_notify_enabled) {
+            ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_notify_ev);
+        } else {
+            maybe_complete_drain();
+        }
+        break;
+    }
     default:
         break;
     }
