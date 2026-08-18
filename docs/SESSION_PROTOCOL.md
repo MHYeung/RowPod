@@ -10,7 +10,8 @@ boundaries and diagnostics.
 | Version | Motion | Session / status | Notes |
 |---------|--------|------------------|-------|
 | v1 | `…1001` 20 B (`uint16 seq` + 9×int16) | `…2007` 8 B / `…2008` 36 B | Preserved for older dashboards |
-| v16 | `…1003` 22 B (`uint32 sample_index` + 9×int16) | `…200a` 12 B / `…200b` 56 B | Preferred by dashboard v16 |
+| v16 | `…1003` 22 B (`uint32 sample_index` + 9×int16) | `…200a` 12 B / `…200b` 56 B | Raw IMU+mag path |
+| fused | `…1004` 24 B (`uint32 sample_index` + Q15 quat + accel + mag) | same v16 session/status | On-device Mahony; gyro stays on the C3 |
 
 Read-only capabilities live at `…2009` (20 B) and advertise supported formats,
 rate mask, max batch frames, IMU/MAG ODRs, ATT MTU, and queue depth.
@@ -21,8 +22,11 @@ rate mask, max batch frames, IMU/MAG ODRs, ATT MTU, and queue depth.
 
 - `9b7e1001-…` — legacy notify/read, 20-byte frames (batched by MTU)
 - `9b7e1003-…` — v16 notify/read, 22-byte frames (batched by MTU)
-- When both CCCDs are enabled, firmware prefers the v16 characteristic to
-  avoid doubling radio load
+- `9b7e1004-…` — fused notify/read, 24-byte frames (Q15 quaternion + accel + mag)
+- When more than one motion CCCD is enabled, firmware prefers fused, then v16,
+  then v1, so radio load is not doubled
+- Capture at ≥224 Hz packs 4 fused frames (~112 notifies/s at 448 Hz) or 2 v16
+  frames, and waits for `NOTIFY_TX` between batches
 
 ### Configuration
 
@@ -69,6 +73,10 @@ only the low 16 bits. The v16 dashboard reconstructs logical indices and reports
 
 Requested rate writes are applied asynchronously by the I2C-owning task.
 `rate_epoch` increments only after the applied IMU rate changes.
+
+Supported sensor-native rates are 56, 112, 224, and 448 Hz. One-byte GATT
+rate fields cannot store 448, so that profile is encoded as wire value `255`
+(`rate_mask` bit 3). Hosts must decode `255 → 448` before computing `sample_ms`.
 
 ## CSV provenance
 

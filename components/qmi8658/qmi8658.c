@@ -20,9 +20,9 @@ static const char *TAG = "qmi8658";
 #define REG_AX_L     0x35
 
 /* CTRL1: ADDR_AI (bit6) + INT2_EN (bit4); BE=0 → little-endian → 0x50
- * CTRL2: aFS=011 (±16g) | aODR=0110 → 0x36
+ * CTRL2: aFS=011 (±16g) | aODR=0110 → 0x36 (112 Hz 6-DoF until live profile)
  * CTRL3: gFS=111 (±2048 dps) | gODR=0110 → 0x76
- * In 6-DoF mode, ODR code 0x6 is approximately 112 Hz.
+ * 6-DoF ODR codes: 0x7=56, 0x6=112, 0x5=224, 0x4=448.4 Hz (not accel-only 500).
  * Wide ranges avoid clipping during fast arm strokes. */
 #define CTRL1_VAL    0x50
 #define CTRL2_VAL    0x36
@@ -99,7 +99,7 @@ esp_err_t qmi8658_read_raw(qmi8658_raw_t *out)
     return ESP_OK;
 }
 
-esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz)
+esp_err_t qmi8658_set_odr_for_rate(uint16_t rate_hz)
 {
     ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not ready");
     /* Use sensor-native rates so seq / rate is an exact, uniform timebase. */
@@ -110,6 +110,8 @@ esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz)
         odr = 0x06;
     } else if (rate_hz == 224) {
         odr = 0x05;
+    } else if (rate_hz == 448) {
+        odr = 0x04; /* 6-DoF 448.4 Hz; accel-only column lists 500 Hz */
     } else {
         return ESP_ERR_INVALID_ARG;
     }
@@ -118,7 +120,7 @@ esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz)
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL2, ctrl2), TAG, "CTRL2");
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL3, ctrl3), TAG, "CTRL3");
     ESP_LOGI(TAG, "trajectory profile %u Hz CTRL2=0x%02X CTRL3=0x%02X",
-             rate_hz, ctrl2, ctrl3);
+             (unsigned)rate_hz, ctrl2, ctrl3);
     return ESP_OK;
 }
 

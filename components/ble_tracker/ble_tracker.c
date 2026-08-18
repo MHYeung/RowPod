@@ -38,6 +38,9 @@ static const ble_uuid128_t uuid_motion_meta =
 static const ble_uuid128_t uuid_motion_data_v16 =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
                      0x71, 0x4f, 0x2f, 0x2b, 0x03, 0x10, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_motion_data_fused =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x04, 0x10, 0x7e, 0x9b);
 
 static const ble_uuid128_t uuid_cfg_svc =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
@@ -80,6 +83,7 @@ static uint8_t s_own_addr_type;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_data_val_handle;
 static uint16_t s_data_v16_val_handle;
+static uint16_t s_data_fused_val_handle;
 static uint16_t s_meta_val_handle;
 static uint16_t s_info_val_handle;
 static uint16_t s_name_val_handle;
@@ -95,6 +99,7 @@ static uint16_t s_status_v16_val_handle;
 static volatile bool s_notify_enabled;
 static volatile bool s_motion_subscribed;
 static volatile bool s_motion_v16_subscribed;
+static volatile bool s_motion_fused_subscribed;
 static volatile bool s_stream_requested;
 static volatile bool s_advertising;
 static volatile bool s_stack_running;
@@ -119,11 +124,12 @@ static uint16_t s_queue_high_water;
 static uint32_t s_session_sensor_base;
 static uint32_t s_session_transport_base;
 static uint32_t s_session_notify_base;
-static uint8_t s_epoch_rate_hz;
+static uint16_t s_epoch_rate_hz;
 
 #define FRAME_QUEUE_DEPTH     96
 #define BATCH_MAX_FRAMES       8 /* live 56 Hz; MTU may pack this many */
-#define BATCH_CAPTURE_FRAMES   2 /* 224 Hz: smaller atomic loss per drop */
+#define BATCH_CAPTURE_FRAMES   2 /* v16 ≥224 Hz */
+#define BATCH_FUSED_CAPTURE_FRAMES 4 /* 24 B fused: half the notify rate */
 #define CONN_ITVL_MAX_FAST    12 /* 15 ms in 1.25 ms units */
 #define CONN_UPDATE_MAX_TRIES  3
 
@@ -145,7 +151,7 @@ static esp_err_t start_advertise(void);
 static int gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t init_stack(void);
 static void host_task(void *param);
-static esp_err_t set_stream_rate(uint8_t rate_hz);
+static esp_err_t set_stream_rate(uint16_t rate_hz);
 static void notify_session_status(void);
 static void frame_queue_reset(void);
 static void maybe_complete_drain(void);
@@ -181,11 +187,18 @@ static void request_fast_conn_params(void)
     }
 }
 
+static bool motion_any_subscribed(void)
+{
+    return s_motion_subscribed || s_motion_v16_subscribed ||
+           s_motion_fused_subscribed;
+}
+
 static uint8_t current_batch_limit(void)
 {
     if (session_capture_active() &&
-        sensor_stream_get_rate_hz() >= SENSOR_PROTO_RATE_LOG_MAX_HZ) {
-        return BATCH_CAPTURE_FRAMES;
+        sensor_stream_get_rate_hz() >= SENSOR_PROTO_RATE_HIGH_HZ) {
+        return s_motion_fused_subscribed ? BATCH_FUSED_CAPTURE_FRAMES
+                                         : BATCH_CAPTURE_FRAMES;
     }
     return BATCH_MAX_FRAMES;
 }
@@ -208,7 +221,7 @@ static void set_ui_state(ui_state_t state)
 
 static void apply_stream_state(void)
 {
-    bool subscribed = s_motion_subscribed || s_motion_v16_subscribed;
+    bool subscribed = motion_any_subscribed();
     s_notify_enabled = subscribed && s_stream_requested;
     sensor_stream_set_enabled(s_notify_enabled);
     if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
@@ -249,17 +262,16 @@ static bool session_accepts_samples(void)
 
 static void note_rate_epoch_if_applied(void)
 {
-    uint8_t applied = sensor_stream_get_applied_rate_hz();
+    uint16_t applied = sensor_stream_get_applied_rate_hz();
     if (sensor_stream_is_rate_applied() && applied != s_epoch_rate_hz) {
         s_rate_epoch++;
         s_epoch_rate_hz = applied;
     }
 }
 
-static esp_err_t set_stream_rate(uint8_t rate_hz)
+static esp_err_t set_stream_rate(uint16_t rate_hz)
 {
-    esp_err_t ret = sensor_stream_set_rate_hz(rate_hz);
-    return ret;
+    return sensor_stream_set_rate_hz(rate_hz);
 }
 
 static void refresh_att_mtu(void)
@@ -304,16 +316,17 @@ static void fill_caps(sensor_proto_caps_t *caps)
     caps->feature_flags =
         SENSOR_PROTO_CAP_FLAG_V1_FRAME | SENSOR_PROTO_CAP_FLAG_V16_FRAME |
         SENSOR_PROTO_CAP_FLAG_DRAIN_BARRIER | SENSOR_PROTO_CAP_FLAG_APPLIED_RATE |
-        SENSOR_PROTO_CAP_FLAG_32BIT_SEQ;
+        SENSOR_PROTO_CAP_FLAG_32BIT_SEQ | SENSOR_PROTO_CAP_FLAG_FUSED_FRAME;
     caps->rate_mask = SENSOR_PROTO_RATE_MASK_56 | SENSOR_PROTO_RATE_MASK_112 |
-                      SENSOR_PROTO_RATE_MASK_224;
+                      SENSOR_PROTO_RATE_MASK_224 | SENSOR_PROTO_RATE_MASK_448;
     caps->max_batch_frames = BATCH_MAX_FRAMES;
-    caps->max_rate_hz = SENSOR_PROTO_RATE_LOG_MAX_HZ;
-    caps->imu_rate_hz = sensor_stream_get_applied_rate_hz();
+    caps->max_rate_hz = sensor_proto_rate_to_wire(SENSOR_PROTO_RATE_LOG_MAX_HZ);
+    caps->imu_rate_hz =
+        sensor_proto_rate_to_wire(sensor_stream_get_applied_rate_hz());
     caps->mag_rate_hz = sensor_stream_get_mag_rate_hz();
     caps->att_mtu = s_att_mtu;
     caps->queue_depth_max = FRAME_QUEUE_DEPTH;
-    caps->firmware_proto = SENSOR_PROTO_FORMAT_VER_V16;
+    caps->firmware_proto = SENSOR_PROTO_FORMAT_VER_FUSED;
 }
 
 static void fill_session_status_v1(sensor_proto_session_status_t *status)
@@ -323,7 +336,8 @@ static void fill_session_status_v1(sensor_proto_session_status_t *status)
     memset(status, 0, sizeof(*status));
     status->ver = SENSOR_PROTO_FORMAT_VER;
     status->state = s_session_state;
-    status->rate_hz = sensor_stream_get_applied_rate_hz();
+    status->rate_hz =
+        sensor_proto_rate_to_wire(sensor_stream_get_applied_rate_hz());
     status->capture_id = s_capture_id;
     status->rate_epoch = s_rate_epoch;
     status->first_seq =
@@ -347,7 +361,7 @@ static void fill_session_status_v1(sensor_proto_session_status_t *status)
     if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         status->flags |= SENSOR_PROTO_SESSION_FLAG_CONNECTED;
     }
-    if (s_motion_subscribed || s_motion_v16_subscribed) {
+    if (motion_any_subscribed()) {
         status->flags |= SENSOR_PROTO_SESSION_FLAG_SUBSCRIBED;
     }
     if (s_notify_enabled) {
@@ -370,8 +384,10 @@ static void fill_session_status_v16(sensor_proto_session_status_v16_t *status)
     memset(status, 0, sizeof(*status));
     status->ver = SENSOR_PROTO_FORMAT_VER_V16;
     status->state = s_session_state;
-    status->requested_rate_hz = sensor_stream_get_rate_hz();
-    status->applied_rate_hz = sensor_stream_get_applied_rate_hz();
+    status->requested_rate_hz =
+        sensor_proto_rate_to_wire(sensor_stream_get_rate_hz());
+    status->applied_rate_hz =
+        sensor_proto_rate_to_wire(sensor_stream_get_applied_rate_hz());
     status->error_reason = s_last_error_reason;
     status->last_command_id = s_last_command_id;
     status->capture_id = s_capture_id;
@@ -402,7 +418,7 @@ static void fill_session_status_v16(sensor_proto_session_status_v16_t *status)
     if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         status->flags |= SENSOR_PROTO_SESSION_FLAG_CONNECTED;
     }
-    if (s_motion_subscribed || s_motion_v16_subscribed) {
+    if (motion_any_subscribed()) {
         status->flags |= SENSOR_PROTO_SESSION_FLAG_SUBSCRIBED;
     }
     if (s_notify_enabled) {
@@ -501,12 +517,23 @@ static int motion_access(uint16_t conn_handle, uint16_t attr_handle,
         return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0
                    ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
+    if (attr_handle == s_data_fused_val_handle) {
+        sensor_proto_frame_fused_t frame = {0};
+        if (sensor_stream_get_latest_frame_fused(&frame) != ESP_OK) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        uint8_t buf[SENSOR_PROTO_FRAME_FUSED_LEN];
+        sensor_proto_pack_frame_fused(buf, &frame);
+        return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0
+                   ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
     return BLE_ATT_ERR_UNLIKELY;
 }
 
 static int handle_session_command(uint8_t command, uint32_t capture_id,
                                   uint8_t rate_hz, uint16_t command_id)
 {
+    uint16_t logical_rate = sensor_proto_rate_from_wire(rate_hz);
     s_last_command_id = command_id;
     s_last_error_reason = SENSOR_PROTO_ERR_NONE;
 
@@ -519,7 +546,7 @@ static int handle_session_command(uint8_t command, uint32_t capture_id,
             s_last_error_reason = SENSOR_PROTO_ERR_BAD_CAPTURE_ID;
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
-        if (rate_hz != 0 && set_stream_rate(rate_hz) != ESP_OK) {
+        if (rate_hz != 0 && set_stream_rate(logical_rate) != ESP_OK) {
             s_last_error_reason = SENSOR_PROTO_ERR_BAD_RATE;
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
@@ -542,7 +569,7 @@ static int handle_session_command(uint8_t command, uint32_t capture_id,
     } else if (command == SENSOR_PROTO_SESSION_START) {
         if (s_session_state != SENSOR_PROTO_STATE_PREPARED ||
             capture_id != s_capture_id ||
-            (rate_hz != 0 && rate_hz != sensor_stream_get_rate_hz())) {
+            (rate_hz != 0 && logical_rate != sensor_stream_get_rate_hz())) {
             s_last_error_reason = SENSOR_PROTO_ERR_BAD_STATE;
             return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
         }
@@ -681,7 +708,8 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
 
     if (attr_handle == s_rate_val_handle) {
         if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-            uint8_t hz = sensor_stream_get_applied_rate_hz();
+            uint8_t hz =
+                sensor_proto_rate_to_wire(sensor_stream_get_applied_rate_hz());
             return os_mbuf_append(ctxt->om, &hz, 1) == 0
                        ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
@@ -693,10 +721,12 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             if (ble_hs_mbuf_to_flat(ctxt->om, &hz, 1, NULL) != 0) {
                 return BLE_ATT_ERR_UNLIKELY;
             }
-            if (session_capture_active() && hz != sensor_stream_get_rate_hz()) {
+            uint16_t logical = sensor_proto_rate_from_wire(hz);
+            if (session_capture_active() &&
+                logical != sensor_stream_get_rate_hz()) {
                 return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
             }
-            if (set_stream_rate(hz) != ESP_OK) {
+            if (set_stream_rate(logical) != ESP_OK) {
                 return BLE_ATT_ERR_UNLIKELY;
             }
             notify_session_status();
@@ -875,6 +905,12 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_data_v16_val_handle,
             },
+            {
+                .uuid = &uuid_motion_data_fused.u,
+                .access_cb = motion_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_data_fused_val_handle,
+            },
             { 0 },
         },
     },
@@ -1031,18 +1067,21 @@ static uint8_t prepare_retry_batch(uint8_t frame_len)
     return s_retry_count;
 }
 
-static bool notify_batch(uint16_t val_handle, bool use_v16)
+static bool notify_batch(uint16_t val_handle, uint8_t frame_len)
 {
-    uint8_t frame_len = use_v16 ? SENSOR_PROTO_FRAME_V16_LEN
-                                : SENSOR_PROTO_FRAME_LEN;
     uint8_t frame_count = prepare_retry_batch(frame_len);
     if (frame_count == 0) {
         return false;
     }
 
-    uint8_t buf[SENSOR_PROTO_FRAME_V16_LEN * BATCH_MAX_FRAMES];
+    uint8_t buf[SENSOR_PROTO_FRAME_FUSED_LEN * BATCH_MAX_FRAMES];
     for (uint8_t i = 0; i < frame_count; i++) {
-        if (use_v16) {
+        if (frame_len == SENSOR_PROTO_FRAME_FUSED_LEN) {
+            sensor_proto_frame_fused_t frame = {0};
+            sensor_proto_sample_to_frame_fused(&frame, &s_retry_batch[i]);
+            sensor_proto_pack_frame_fused(&buf[i * SENSOR_PROTO_FRAME_FUSED_LEN],
+                                          &frame);
+        } else if (frame_len == SENSOR_PROTO_FRAME_V16_LEN) {
             sensor_proto_frame_v16_t frame = {0};
             sensor_proto_sample_to_frame_v16(&frame, &s_retry_batch[i]);
             sensor_proto_pack_frame_v16(&buf[i * SENSOR_PROTO_FRAME_V16_LEN],
@@ -1058,18 +1097,23 @@ static bool notify_batch(uint16_t val_handle, bool use_v16)
     if (!om) {
         return true; /* keep retry batch */
     }
+    /*
+     * IDF 5 deferred NOTIFY_TX until the controller sent the PDU. IDF 6
+     * NimBLE emits it synchronously inside ble_gatts_notify_custom
+     * ("attempted"). Mark inflight *before* that call so the callback can
+     * clear it. Setting inflight after return deadlocks: one notify, then
+     * the 96-deep queue fills and the browser sees a stale 0 Hz stream.
+     */
+    s_notify_inflight = true;
     int rc = ble_gatts_notify_custom(s_conn_handle, val_handle, om);
-    if (rc != 0) {
+    if (rc != 0 && s_notify_inflight) {
+        s_notify_inflight = false;
         s_notify_failures++;
         if ((s_notify_failures % 100) == 1) {
             ESP_LOGW(TAG, "notify rc=%d failures=%" PRIu32, rc,
                      s_notify_failures);
         }
-        /* Keep retry batch; caller re-arms while retry/queue remain. */
-        return true;
     }
-    /* Keep the batch until NOTIFY_TX: queued != delivered. */
-    s_notify_inflight = true;
     return true;
 }
 
@@ -1084,14 +1128,16 @@ static void notify_ev_cb(struct ble_npl_event *ev)
     }
 
     /*
-     * Prefer the v16 characteristic when subscribed; otherwise use legacy v1.
-     * Dual subscription is rare; sending once avoids doubling radio load.
+     * Prefer fused (Mahony) when subscribed; else v16; else legacy v1.
+     * Dual subscription must not double the radio load.
      */
     bool sent = false;
-    if (s_motion_v16_subscribed) {
-        sent = notify_batch(s_data_v16_val_handle, true);
+    if (s_motion_fused_subscribed) {
+        sent = notify_batch(s_data_fused_val_handle, SENSOR_PROTO_FRAME_FUSED_LEN);
+    } else if (s_motion_v16_subscribed) {
+        sent = notify_batch(s_data_v16_val_handle, SENSOR_PROTO_FRAME_V16_LEN);
     } else if (s_motion_subscribed) {
-        sent = notify_batch(s_data_val_handle, false);
+        sent = notify_batch(s_data_val_handle, SENSOR_PROTO_FRAME_LEN);
     }
     if (!sent) {
         maybe_complete_drain();
@@ -1202,6 +1248,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             s_advertising = false;
             s_motion_subscribed = false;
             s_motion_v16_subscribed = false;
+            s_motion_fused_subscribed = false;
             s_stream_requested = true;
             s_notify_enabled = false;
             s_session_state = SENSOR_PROTO_STATE_IDLE;
@@ -1233,6 +1280,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         s_advertising = false;
         s_motion_subscribed = false;
         s_motion_v16_subscribed = false;
+        s_motion_fused_subscribed = false;
         s_stream_requested = true;
         s_notify_enabled = false;
         s_session_state = SENSOR_PROTO_STATE_IDLE;
@@ -1251,7 +1299,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             s_motion_subscribed = event->subscribe.cur_notify;
             ESP_LOGI(TAG, "motion v1 notify %s",
                      s_motion_subscribed ? "ON" : "OFF");
-            if (!s_motion_subscribed && !s_motion_v16_subscribed) {
+            if (!motion_any_subscribed()) {
                 (void)set_stream_rate(SENSOR_PROTO_RATE_LIVE_HZ);
                 frame_queue_reset();
             }
@@ -1261,7 +1309,17 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             s_motion_v16_subscribed = event->subscribe.cur_notify;
             ESP_LOGI(TAG, "motion v16 notify %s",
                      s_motion_v16_subscribed ? "ON" : "OFF");
-            if (!s_motion_subscribed && !s_motion_v16_subscribed) {
+            if (!motion_any_subscribed()) {
+                (void)set_stream_rate(SENSOR_PROTO_RATE_LIVE_HZ);
+                frame_queue_reset();
+            }
+            apply_stream_state();
+            notify_session_status();
+        } else if (event->subscribe.attr_handle == s_data_fused_val_handle) {
+            s_motion_fused_subscribed = event->subscribe.cur_notify;
+            ESP_LOGI(TAG, "motion fused notify %s",
+                     s_motion_fused_subscribed ? "ON" : "OFF");
+            if (!motion_any_subscribed()) {
                 (void)set_stream_rate(SENSOR_PROTO_RATE_LIVE_HZ);
                 frame_queue_reset();
             }
@@ -1295,7 +1353,8 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     }
     case BLE_GAP_EVENT_NOTIFY_TX: {
         uint16_t handle = event->notify_tx.attr_handle;
-        if (handle != s_data_val_handle && handle != s_data_v16_val_handle) {
+        if (handle != s_data_val_handle && handle != s_data_v16_val_handle &&
+            handle != s_data_fused_val_handle) {
             break;
         }
         s_notify_inflight = false;
@@ -1363,7 +1422,7 @@ static esp_err_t init_stack(void)
     }
     ble_svc_gap_init();
     ble_svc_gatt_init();
-    /* Prefer a large ATT MTU so a 22-byte v16 frame + batching can fit. */
+    /* Prefer a large ATT MTU so 4×24 B fused (or 2×22 B v16) batches fit. */
     if (ble_att_set_preferred_mtu(247) != 0) {
         ESP_LOGW(TAG, "failed to set preferred ATT MTU");
     }
@@ -1384,6 +1443,7 @@ static esp_err_t init_stack(void)
     s_notify_enabled = false;
     s_motion_subscribed = false;
     s_motion_v16_subscribed = false;
+    s_motion_fused_subscribed = false;
     s_stream_requested = true;
     s_att_mtu = BLE_ATT_MTU_DFLT;
     s_transport_dropped = 0;
@@ -1465,6 +1525,7 @@ esp_err_t ble_tracker_stop_advertising(void)
     s_notify_enabled = false;
     s_motion_subscribed = false;
     s_motion_v16_subscribed = false;
+    s_motion_fused_subscribed = false;
     s_stream_requested = true;
     frame_queue_reset();
     sensor_stream_set_enabled(false);

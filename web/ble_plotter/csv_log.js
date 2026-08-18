@@ -11,7 +11,7 @@ export const CSV_COLUMNS =
   "mx_clean_G,my_clean_G,mz_clean_G,mx_cal_G,my_cal_G,mz_cal_G," +
   "ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw,mx_raw,my_raw,mz_raw";
 
-/** Default ring capacity: ~9 min @ 224 Hz one pod, or ~4 min @ 4×112 Hz. */
+/** Default ring capacity: ~6 min @ 448 Hz one pod, or ~4 min @ 4×112 Hz. */
 const DEFAULT_CAPACITY = 120000;
 
 /**

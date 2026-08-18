@@ -1,5 +1,5 @@
 /**
- * Tilt from accel + tilt-compensated yaw from mag (no gyro fusion yet).
+ * Fallback tilt from accel + mag when the fused quaternion is absent.
  * Returns radians: { roll, pitch, yaw }
  */
 export function attitudeFromSensors(ax, ay, az, mx, my, mz) {

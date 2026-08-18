@@ -64,8 +64,9 @@ Open `http://localhost:8080/?v=16`, click **Add pod**, select a tracker.
 │   ├── i2c_bus/          Single I2C master owner
 │   ├── qmi8658/          IMU driver
 │   ├── qmc5883p/         Magnetometer driver
-│   ├── sensor_protocol/  BLE wire frames (v1 + additive v16) + UUIDs
-│   ├── sensor_stream/    Native-clock 56/112/224 Hz DRDY stream
+│   ├── mahony/           On-device AHRS (gyro + accel + mag yaw)
+│   ├── sensor_protocol/  BLE wire frames (v1 / v16 / fused) + UUIDs
+│   ├── sensor_stream/    Native-clock 56/112/224/448 Hz DRDY stream + Mahony
 │   ├── ble_tracker/      NimBLE peripheral + queued packet batching / drain
 │   ├── ui/               Status LEDs + button gestures
 │   ├── battery/          ADC oneshot on GPIO2 → pack mV / %

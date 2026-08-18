@@ -31,10 +31,11 @@ esp_err_t qmc5883p_init(void);
 /**
  * @brief Match magnetometer ODR to an IMU capture profile.
  *
- * Maps 56/112/224 Hz IMU profiles to 50/100/200 Hz magnetometer ODR.
+ * Maps 56/112/224/448 Hz IMU profiles to 50/100/200/100 Hz magnetometer ODR.
+ * 448 Hz IMU keeps mag at 100 Hz (~10 ms) for heading correction.
  * Must be called from the I2C-owning task.
  */
-esp_err_t qmc5883p_set_odr_for_rate(uint8_t imu_rate_hz);
+esp_err_t qmc5883p_set_odr_for_rate(uint16_t imu_rate_hz);
 
 esp_err_t qmc5883p_read_raw(qmc5883p_raw_t *out);
 esp_err_t qmc5883p_get_scale(qmc5883p_scale_t *out);

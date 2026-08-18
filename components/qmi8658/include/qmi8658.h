@@ -37,12 +37,12 @@ esp_err_t qmi8658_read_raw(qmi8658_raw_t *out);
 esp_err_t qmi8658_get_scale(qmi8658_scale_t *out);
 
 /**
- * @brief Select an exact 6-DoF ODR (56 / 112 / 224 Hz).
+ * @brief Select an exact 6-DoF ODR (56 / 112 / 224 / 448 Hz).
  *
- * Exact sensor-clock rates keep sequence-derived sample time uniform.
- * Must be called from the I2C-owning task (sensor_stream).
+ * 448 Hz is CTRL2/CTRL3 ODR code 0x4 (datasheet 448.4 Hz). Accel-only 500 Hz
+ * is not a 6-DoF rate. Must be called from the I2C-owning task.
  */
-esp_err_t qmi8658_set_odr_for_rate(uint8_t rate_hz);
+esp_err_t qmi8658_set_odr_for_rate(uint16_t rate_hz);
 
 #ifdef __cplusplus
 }

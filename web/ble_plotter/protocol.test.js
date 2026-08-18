@@ -6,6 +6,7 @@
 import {
   FRAME_V1_LEN,
   FRAME_V16_LEN,
+  FRAME_FUSED_LEN,
   SESSION_COMMAND_STATE,
   SESSION_DRAIN,
   SESSION_STOP,
@@ -13,13 +14,17 @@ import {
   capturePreflight,
   decodeCaps,
   decodeFrame,
+  decodeFrameFused,
   decodeFrameV16,
   decodeFrames,
+  decodeFramesFused,
   decodeFramesV16,
   decodeSessionStatus,
   decodeSessionStatusV16,
   encodeSessionCommand,
   encodeSessionCommandV16,
+  rateFromWire,
+  rateToWire,
 } from "./protocol.js";
 
 let passed = 0;
@@ -91,6 +96,26 @@ const meta = {
   assertEq(frame.sampleIndex, 0x12345678, "v16 sample index");
 }
 
+/* --- fused frame --- */
+{
+  const fused = [
+    0x78, 0x56, 0x34, 0x12,
+    0xff, 0x7f, // qw = 32767 → 1
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x08, // ax = 2048 → 1 g
+    0x00, 0x00, 0x00, 0x00,
+    0xA6, 0x0E, // mx = 3750 → 1 G
+    0x00, 0x00, 0x00, 0x00,
+  ];
+  const view = bytes(fused);
+  assertEq(view.byteLength, FRAME_FUSED_LEN, "fused frame length");
+  const frame = decodeFrameFused(view, meta);
+  assertEq(frame.protocol, 3, "fused protocol marker");
+  assertEq(frame.quat.qw, 1, "fused qw Q15");
+  assertEq(frame.eng.ax, 1, "fused ax scale");
+  assertEq(frame.eng.mx, 1, "fused mx scale");
+}
+
 /* --- batched payloads --- */
 {
   const one = new Uint8Array(FRAME_V1_LEN);
@@ -115,6 +140,14 @@ const meta = {
     threw = true;
   }
   assert(threw, "malformed v16 payload rejected");
+
+  threw = false;
+  try {
+    decodeFramesFused(new DataView(new Uint8Array(25).buffer), meta);
+  } catch (_) {
+    threw = true;
+  }
+  assert(threw, "malformed fused payload rejected");
 }
 
 /* --- sequence wrap / missing frames --- */
@@ -156,6 +189,11 @@ const meta = {
   const v16view = new DataView(v16.buffer);
   assertEq(SESSION_COMMAND_STATE[SESSION_STOP], "stop_requested", "stop maps to state");
   assertEq(SESSION_COMMAND_STATE[SESSION_DRAIN], "draining", "drain maps to state");
+
+  assertEq(rateToWire(448), 255, "448 Hz encodes as wire 255");
+  assertEq(rateFromWire(255), 448, "wire 255 decodes as 448 Hz");
+  const captureCmd = encodeSessionCommand(2, 1, 448, 0);
+  assertEq(captureCmd[2], 255, "session cmd 448 Hz is wire 255");
 }
 
 /* --- status decode --- */
@@ -198,10 +236,10 @@ const meta = {
   const caps = new Uint8Array(20);
   caps[0] = 2;
   caps[1] = 0x1f;
-  caps[2] = 0x07;
+  caps[2] = 0x0f;
   caps[3] = 8;
-  caps[4] = 224;
-  caps[5] = 112;
+  caps[4] = 255;
+  caps[5] = 255;
   caps[6] = 100;
   new DataView(caps.buffer).setUint16(8, 247, true);
   new DataView(caps.buffer).setUint16(10, 96, true);
@@ -211,6 +249,24 @@ const meta = {
   assert(decoded.supportsDrain, "caps supports drain");
   assertEq(decoded.maxBatchFrames, 8, "caps max batch");
   assertEq(decoded.attMtu, 247, "caps mtu");
+  assertEq(decoded.maxRateHz, 448, "caps max rate 448");
+  assertEq(decoded.imuRateHz, 448, "caps imu rate 448");
+  assert(decoded.rates[448], "caps advertises 448 Hz");
+}
+
+/* --- fused capabilities --- */
+{
+  const caps = new Uint8Array(20);
+  caps[0] = 2;
+  caps[1] = 0x3f; // includes CAP_FLAG_FUSED_FRAME
+  caps[2] = 0x0f;
+  caps[3] = 8;
+  caps[4] = 255;
+  new DataView(caps.buffer).setUint16(8, 247, true);
+  new DataView(caps.buffer).setUint16(12, 3, true);
+  const decoded = decodeCaps(new DataView(caps.buffer));
+  assert(decoded.supportsFused, "caps supports fused");
+  assertEq(decoded.firmwareProto, 3, "caps firmware proto fused");
 }
 
 /* --- preflight --- */
@@ -219,6 +275,14 @@ const meta = {
   assert(!bad.ok, "small MTU preflight fails for v16");
   const ok = capturePreflight({ attMtu: 247, maxBatchFrames: 8, supportsV16: true }, 56, 1);
   assert(ok.ok, "live rate preflight ok");
+  const fusedCap = capturePreflight(
+    { attMtu: 247, maxBatchFrames: 8, supportsFused: true, supportsV16: true },
+    448,
+    1
+  );
+  assert(fusedCap.ok, "fused 448 Hz preflight ok at MTU 247");
+  assertEq(fusedCap.frameLen, 24, "fused preflight frame length");
+  assertEq(fusedCap.batch, 4, "fused capture batches 4 frames");
 }
 
 console.log(`protocol tests: ${passed} passed, ${failed} failed`);

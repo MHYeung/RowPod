@@ -290,7 +290,7 @@ export class PodRegistry {
     this._emitStats();
   }
 
-  /** @param {56|112|224} hz */
+  /** @param {56|112|224|448} hz */
   async setRateAll(hz) {
     for (const s of this.sessions.values()) {
       if (s.status !== "connected") continue;
@@ -390,6 +390,7 @@ export class PodRegistry {
         ...(session.caps || {}),
         attMtu: session.sessionStatus?.attMtu || session.caps?.attMtu || 23,
         /* Preflight must use the stream we will actually send. */
+        supportsFused: Boolean(session.client.usesFusedMotion),
         supportsV16: Boolean(
           session.client.usesV16Motion &&
           (session.sessionStatus?.attMtu || session.caps?.attMtu || 23) >= 25

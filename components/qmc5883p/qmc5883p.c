@@ -84,7 +84,7 @@ esp_err_t qmc5883p_read_raw(qmc5883p_raw_t *out)
     return ESP_OK;
 }
 
-esp_err_t qmc5883p_set_odr_for_rate(uint8_t imu_rate_hz)
+esp_err_t qmc5883p_set_odr_for_rate(uint16_t imu_rate_hz)
 {
     ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not ready");
     uint8_t odr_bits;
@@ -92,7 +92,8 @@ esp_err_t qmc5883p_set_odr_for_rate(uint8_t imu_rate_hz)
     if (imu_rate_hz == 56) {
         odr_bits = 0x01;
         mag_hz = 50;
-    } else if (imu_rate_hz == 112) {
+    } else if (imu_rate_hz == 112 || imu_rate_hz == 448) {
+        /* CTRL1 ODR=10 → 100 Hz; 448 Hz IMU uses mag only for ~10 ms correction. */
         odr_bits = 0x02;
         mag_hz = 100;
     } else if (imu_rate_hz == 224) {
@@ -105,7 +106,8 @@ esp_err_t qmc5883p_set_odr_for_rate(uint8_t imu_rate_hz)
     ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL1, ctrl1), TAG,
                         "CTRL1 ODR");
     s_scale.odr_hz = mag_hz;
-    ESP_LOGI(TAG, "ODR %u Hz for IMU profile %u Hz", mag_hz, imu_rate_hz);
+    ESP_LOGI(TAG, "ODR %u Hz for IMU profile %u Hz", mag_hz,
+             (unsigned)imu_rate_hz);
     return ESP_OK;
 }
 

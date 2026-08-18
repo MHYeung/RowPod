@@ -26,20 +26,20 @@ void sensor_stream_set_enabled(bool enabled);
 bool sensor_stream_is_enabled(void);
 
 /**
- * @brief Request a sensor-native sample rate (56, 112, or 224 Hz).
+ * @brief Request a sensor-native sample rate (56, 112, 224, or 448 Hz).
  *
  * The I2C-owning task applies the change asynchronously. Query
  * sensor_stream_get_applied_rate_hz() / is_rate_applied() for confirmation.
- * No host-side decimation is used, so sample_index remains a uniform clock.
+ * 448 Hz IMU is paired with 100 Hz mag (~10 ms heading correction).
  * Safe from BLE callbacks.
  */
-esp_err_t sensor_stream_set_rate_hz(uint8_t rate_hz);
+esp_err_t sensor_stream_set_rate_hz(uint16_t rate_hz);
 
 /** @brief Last requested rate (may not yet be applied by hardware). */
-uint8_t sensor_stream_get_rate_hz(void);
+uint16_t sensor_stream_get_rate_hz(void);
 
 /** @brief Rate confirmed by the last successful IMU+MAG ODR update. */
-uint8_t sensor_stream_get_applied_rate_hz(void);
+uint16_t sensor_stream_get_applied_rate_hz(void);
 
 /** @brief True when requested and applied rates match and no dirty request is pending. */
 bool sensor_stream_is_rate_applied(void);
@@ -61,6 +61,12 @@ esp_err_t sensor_stream_get_latest(sensor_proto_sample_t *out);
  * Returns ESP_ERR_NOT_FOUND if none yet.
  */
 esp_err_t sensor_stream_get_latest_frame_v1(sensor_proto_frame_t *out);
+
+/**
+ * @brief Copy latest sample packed as a 24-byte fused frame (quat + accel + mag).
+ * Returns ESP_ERR_NOT_FOUND if none yet.
+ */
+esp_err_t sensor_stream_get_latest_frame_fused(sensor_proto_frame_fused_t *out);
 
 uint32_t sensor_stream_dropped_count(void);
 

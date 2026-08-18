@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>C3-Tracker Web BLE</title>
-  <link rel="stylesheet" href="styles.css?v=16.5" />
+  <link rel="stylesheet" href="styles.css?v=16.7" />
 </head>
 <body>
   <header>
@@ -76,8 +76,7 @@
 
   <section id="panel-orientation" class="tab-panel" role="tabpanel" hidden>
     <p class="hint">
-      Cube attitude from the selected pod: accel (tilt) + mag (tilt-compensated yaw).
-      Orthographic projection. RGB faces = +X / +Y / +Z. No gyro fusion yet.
+      Cube attitude from on-device Mahony (gyro + accel + mag yaw correction).
     </p>
     <figure class="cube-wrap">
       <figcaption>Selected pod orientation</figcaption>
@@ -123,7 +122,7 @@
   <section id="panel-logging" class="tab-panel" role="tabpanel" hidden>
     <p class="hint">
       Calibrate the magnetometer in the assembled enclosure first: slow figure-8 and
-      tumble through nose/tail/side-down (not flat table spins). Logging uses 224 Hz
+      tumble through nose/tail/side-down (not flat table spins). Logging uses 448 Hz
       for one pod and 112 Hz for two or more (prefers max rate over zero-loss)
       and brackets motion with two-second stationary bias intervals.
       Start runs a transport preflight; stop waits for a device drain-complete barrier.
@@ -189,6 +188,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=16.5"></script>
+  <script type="module" src="app.js?v=16.7"></script>
 </body>
 </html>

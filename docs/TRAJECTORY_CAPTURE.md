@@ -26,9 +26,9 @@ or test room.
 4. Download the CSV. A valid v6 file contains `bias_start`, `motion`, and
    `bias_end` phases plus calibrated magnetic columns and integrity fields.
 
-The firmware uses native 56/112/224 Hz sensor-clock profiles, ±16 g, ±2048 dps,
+The firmware uses native 56/112/224/448 Hz sensor-clock profiles, ±16 g, ±2048 dps,
 400 kHz I2C, DRDY loss accounting, and BLE packet batching. Single-pod logging
-selects 224 Hz; coalesced acquisition events advance `seq` so quality checks
+selects 448 Hz 6-DoF (not accel-only 500 Hz) with 100 Hz magnetometer; coalesced acquisition events advance `seq` so quality checks
 can detect them.
 
 ## Reconstruct and validate

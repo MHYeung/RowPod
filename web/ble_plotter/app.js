@@ -9,6 +9,7 @@ import {
   SESSION_PREPARE,
   SESSION_START,
   SESSION_STOP,
+  eulerFromQuat,
 } from "./protocol.js";
 import { MultiPlot } from "./plot.js";
 import { OrientationCube, attitudeFromSensors } from "./orientation.js";
@@ -69,7 +70,7 @@ try {
       !btnTestStart || !btnTestStop || !btnTestDownload || !btnTestClear ||
       !testLabelEl || !testIntervalEl || !testElapsedEl || !testRowsEl ||
       !testStateEl || !testLatestEl || !document.getElementById("captureIntegrity")) {
-    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=16.4");
+    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=16.7");
   }
 
   const plotAccel = new MultiPlot(document.getElementById("plotAccel"), ["ax", "ay", "az"], {
@@ -127,7 +128,7 @@ try {
 
   function chooseLogRateHz() {
     const n = registry.list().filter((s) => s.status === "connected").length;
-    /* Prefer max rate over zero-loss: 1-pod 224 Hz, multi-pod 112 Hz.
+    /* Prefer max rate over zero-loss: 1-pod 448 Hz, multi-pod 112 Hz.
      * Sparse gaps are acceptable; STOP uses write-without-response so control
      * traffic should still land under notify load. */
     return n <= 1 ? RATE_LOG_MAX_HZ : RATE_LOG_HZ;
@@ -197,7 +198,9 @@ try {
           : ` · MTU ${mtu}`;
         line.textContent =
         `${s.position}: proto v${s.protocolVersion || 1}` +
-        ` · motion ${s.client.usesV16Motion ? "v16" : "v1"} · ` +
+        ` · motion ${
+          s.client.usesFusedMotion ? "fused" : s.client.usesV16Motion ? "v16" : "v1"
+        } · ` +
         `${s.rate || 0}/${applied} Hz (req ${requested}) · ` +
         `gaps ${s.gaps || 0} · missing ${s.missingFrames || 0} · ` +
         `q ${status.queueDepth ?? 0}/${status.queueHighWater ?? 0} · ` +
@@ -716,9 +719,19 @@ try {
 
     if (registry.selectedId === session.id) {
       const { ax, ay, az } = cleanFrame.eng;
-      const { mx, my, mz } = magCal.apply(session.id, cleanFrame.eng);
-      const att = attitudeFromSensors(ax, ay, az, mx, my, mz);
-      cube.setAttitude(att.roll, att.pitch, att.yaw);
+      if (cleanFrame.quat) {
+        const att = eulerFromQuat(
+          cleanFrame.quat.qw,
+          cleanFrame.quat.qx,
+          cleanFrame.quat.qy,
+          cleanFrame.quat.qz
+        );
+        cube.setAttitude(att.roll, att.pitch, att.yaw);
+      } else {
+        const { mx, my, mz } = magCal.apply(session.id, cleanFrame.eng);
+        const att = attitudeFromSensors(ax, ay, az, mx, my, mz);
+        cube.setAttitude(att.roll, att.pitch, att.yaw);
+      }
       rateEl.textContent = String(session.rate || 0);
       gapsEl.textContent = String(session.gaps || 0);
     }

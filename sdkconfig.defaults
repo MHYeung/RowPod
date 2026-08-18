@@ -6,6 +6,6 @@ CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_CONTROLLER_ENABLED=y
 CONFIG_BT_BLE_ENABLED=y
-# Prefer large ATT MTU so 22-byte v16 frames + batching can fit when the
-# central (Chrome/OS) actually completes Exchange MTU. Windows often stays 23.
+# Prefer large ATT MTU so 24-byte fused (or 22-byte v16) batches can fit when
+# the central (Chrome/OS) actually completes Exchange MTU. Windows often stays 23.
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247

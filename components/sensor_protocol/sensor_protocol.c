@@ -14,6 +14,12 @@ void sensor_proto_pack_frame_v16(uint8_t out[SENSOR_PROTO_FRAME_V16_LEN],
     memcpy(out, frame, SENSOR_PROTO_FRAME_V16_LEN);
 }
 
+void sensor_proto_pack_frame_fused(uint8_t out[SENSOR_PROTO_FRAME_FUSED_LEN],
+                                   const sensor_proto_frame_fused_t *frame)
+{
+    memcpy(out, frame, SENSOR_PROTO_FRAME_FUSED_LEN);
+}
+
 void sensor_proto_sample_to_frame_v1(sensor_proto_frame_t *out,
                                      const sensor_proto_sample_t *sample)
 {
@@ -39,6 +45,22 @@ void sensor_proto_sample_to_frame_v16(sensor_proto_frame_v16_t *out,
     out->gx = sample->gx;
     out->gy = sample->gy;
     out->gz = sample->gz;
+    out->mx = sample->mx;
+    out->my = sample->my;
+    out->mz = sample->mz;
+}
+
+void sensor_proto_sample_to_frame_fused(sensor_proto_frame_fused_t *out,
+                                        const sensor_proto_sample_t *sample)
+{
+    out->sample_index = sample->sample_index;
+    out->qw = sample->qw;
+    out->qx = sample->qx;
+    out->qy = sample->qy;
+    out->qz = sample->qz;
+    out->ax = sample->ax;
+    out->ay = sample->ay;
+    out->az = sample->az;
     out->mx = sample->mx;
     out->my = sample->my;
     out->mz = sample->mz;

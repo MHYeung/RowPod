@@ -3,6 +3,7 @@ export const MOTION_SVC = "9b7e1000-2b2f-4f71-9b86-4bb2e6d54f00";
 export const MOTION_DATA = "9b7e1001-2b2f-4f71-9b86-4bb2e6d54f00";
 export const MOTION_META = "9b7e1002-2b2f-4f71-9b86-4bb2e6d54f00";
 export const MOTION_DATA_V16 = "9b7e1003-2b2f-4f71-9b86-4bb2e6d54f00";
+export const MOTION_DATA_FUSED = "9b7e1004-2b2f-4f71-9b86-4bb2e6d54f00";
 
 /** Pod configuration / software-sync service. */
 export const CFG_SVC = "9b7e2000-2b2f-4f71-9b86-4bb2e6d54f00";
@@ -42,6 +43,7 @@ export const CAP_FLAG_V16_FRAME = 0x02;
 export const CAP_FLAG_DRAIN_BARRIER = 0x04;
 export const CAP_FLAG_APPLIED_RATE = 0x08;
 export const CAP_FLAG_32BIT_SEQ = 0x10;
+export const CAP_FLAG_FUSED_FRAME = 0x20;
 
 export const SESSION_STATES = Object.freeze({
   0: "idle",
@@ -76,10 +78,25 @@ export const ERROR_REASONS = Object.freeze({
 /** Device stream rates (must match firmware allow-list). */
 export const RATE_LIVE_HZ = 56;
 export const RATE_LOG_HZ = 112;
-export const RATE_LOG_MAX_HZ = 224;
+export const RATE_HIGH_HZ = 224;
+/** QMI8658A 6-DoF native ODR (448.4 Hz). Accel-only 500 Hz is not used. */
+export const RATE_CAPTURE_HZ = 448;
+export const RATE_LOG_MAX_HZ = RATE_CAPTURE_HZ;
+/** uint8 wire token: 448 does not fit in 1-byte rate fields. */
+export const RATE_CAPTURE_WIRE = 255;
+
+export function rateToWire(hz) {
+  return hz >= RATE_CAPTURE_HZ ? RATE_CAPTURE_WIRE : hz;
+}
+
+export function rateFromWire(wire) {
+  return wire === RATE_CAPTURE_WIRE ? RATE_CAPTURE_HZ : wire;
+}
 
 export const FRAME_V1_LEN = 20;
 export const FRAME_V16_LEN = 22;
+export const FRAME_FUSED_LEN = 24;
+export const Q15 = 32767;
 
 export const CHANNELS = [
   { key: "ax", group: "accel", color: "#f07178", label: "Ax" },
@@ -174,6 +191,106 @@ export function decodeFrameV16(view, meta) {
     raw: axes.raw,
     eng: axes.eng,
   };
+}
+
+/**
+ * Fused 24-byte frame: sample_index + Q15 quat + accel + mag. Gyro is omitted.
+ * @param {DataView} view
+ * @param {{accel_lsb_per_g:number,mag_lsb_per_gauss:number}} meta
+ */
+export function decodeFrameFused(view, meta) {
+  if (view.byteLength < FRAME_FUSED_LEN) {
+    throw new Error(`short fused frame ${view.byteLength}`);
+  }
+  const sampleIndex = view.getUint32(0, true);
+  const qw = view.getInt16(4, true) / Q15;
+  const qx = view.getInt16(6, true) / Q15;
+  const qy = view.getInt16(8, true) / Q15;
+  const qz = view.getInt16(10, true) / Q15;
+  const a = meta.accel_lsb_per_g || 2048;
+  const m = meta.mag_lsb_per_gauss || 3750;
+  const raw = {
+    ax: view.getInt16(12, true),
+    ay: view.getInt16(14, true),
+    az: view.getInt16(16, true),
+    gx: 0,
+    gy: 0,
+    gz: 0,
+    mx: view.getInt16(18, true),
+    my: view.getInt16(20, true),
+    mz: view.getInt16(22, true),
+    qw: view.getInt16(4, true),
+    qx: view.getInt16(6, true),
+    qy: view.getInt16(8, true),
+    qz: view.getInt16(10, true),
+  };
+  return {
+    protocol: 3,
+    seq: sampleIndex >>> 0,
+    sampleIndex,
+    quat: { qw, qx, qy, qz },
+    raw,
+    eng: {
+      ax: raw.ax / a,
+      ay: raw.ay / a,
+      az: raw.az / a,
+      gx: 0,
+      gy: 0,
+      gz: 0,
+      mx: raw.mx / m,
+      my: raw.my / m,
+      mz: raw.mz / m,
+    },
+  };
+}
+
+/**
+ * Body-frame deg/s from consecutive unit quaternions (Mahony already used gyro).
+ * @param {{qw:number,qx:number,qy:number,qz:number}|null} prev
+ * @param {{qw:number,qx:number,qy:number,qz:number}} cur
+ * @param {number} dtSec
+ */
+export function gyroDpsFromQuat(prev, cur, dtSec) {
+  if (!prev || !(dtSec > 1e-4)) {
+    return { gx: 0, gy: 0, gz: 0 };
+  }
+  const dq0 = (cur.qw - prev.qw) / dtSec;
+  const dq1 = (cur.qx - prev.qx) / dtSec;
+  const dq2 = (cur.qy - prev.qy) / dtSec;
+  const dq3 = (cur.qz - prev.qz) / dtSec;
+  const rad2deg = 180 / Math.PI;
+  return {
+    gx: (2 * (-cur.qx * dq0 + cur.qw * dq1 + cur.qz * dq2 - cur.qy * dq3)) * rad2deg,
+    gy: (2 * (-cur.qy * dq0 - cur.qz * dq1 + cur.qw * dq2 + cur.qx * dq3)) * rad2deg,
+    gz: (2 * (-cur.qz * dq0 + cur.qy * dq1 - cur.qx * dq2 + cur.qw * dq3)) * rad2deg,
+  };
+}
+
+/** Aerospace ZYX Euler radians from a unit quaternion. */
+export function eulerFromQuat(qw, qx, qy, qz) {
+  const sinp = 2 * (qw * qy - qz * qx);
+  return {
+    roll: Math.atan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy)),
+    pitch: Math.abs(sinp) >= 1 ? Math.sign(sinp) * (Math.PI / 2) : Math.asin(sinp),
+    yaw: Math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)),
+  };
+}
+
+/** Decode one or more packed 24-byte fused frames from a BLE notification. */
+export function decodeFramesFused(view, meta) {
+  if (view.byteLength < FRAME_FUSED_LEN || view.byteLength % FRAME_FUSED_LEN !== 0) {
+    throw new Error(`invalid fused motion payload ${view.byteLength}`);
+  }
+  const frames = [];
+  for (let offset = 0; offset < view.byteLength; offset += FRAME_FUSED_LEN) {
+    frames.push(
+      decodeFrameFused(
+        new DataView(view.buffer, view.byteOffset + offset, FRAME_FUSED_LEN),
+        meta
+      )
+    );
+  }
+  return frames;
 }
 
 /** Decode one or more packed 20-byte frames from a BLE notification. */
@@ -278,7 +395,7 @@ export function decodeMeta(view) {
   }
   return {
     ver: view.getUint8(0),
-    rate_hz: view.getUint8(1),
+    rate_hz: rateFromWire(view.getUint8(1)),
     accel_lsb_per_g: view.getUint16(2, true),
     gyro_lsb_per_dps: view.getUint16(4, true),
     mag_lsb_per_gauss: view.getUint16(6, true),
@@ -311,8 +428,8 @@ export function decodeCaps(view) {
     featureFlags,
     rateMask,
     maxBatchFrames: view.getUint8(3),
-    maxRateHz: view.getUint8(4),
-    imuRateHz: view.getUint8(5),
+    maxRateHz: rateFromWire(view.getUint8(4)),
+    imuRateHz: rateFromWire(view.getUint8(5)),
     magRateHz: view.getUint8(6),
     attMtu: view.getUint16(8, true),
     queueDepthMax: view.getUint16(10, true),
@@ -320,10 +437,12 @@ export function decodeCaps(view) {
     supportsV16: (featureFlags & CAP_FLAG_V16_FRAME) !== 0,
     supportsDrain: (featureFlags & CAP_FLAG_DRAIN_BARRIER) !== 0,
     supports32bitSeq: (featureFlags & CAP_FLAG_32BIT_SEQ) !== 0,
+    supportsFused: (featureFlags & CAP_FLAG_FUSED_FRAME) !== 0,
     rates: {
       56: (rateMask & 0x01) !== 0,
       112: (rateMask & 0x02) !== 0,
       224: (rateMask & 0x04) !== 0,
+      448: (rateMask & 0x08) !== 0,
     },
   };
 }
@@ -359,7 +478,7 @@ export function encodeSessionCommand(command, captureId, rateHz = 0, flags = 0) 
   const view = new DataView(bytes.buffer);
   view.setUint8(0, 1);
   view.setUint8(1, command);
-  view.setUint8(2, rateHz);
+  view.setUint8(2, rateToWire(rateHz));
   view.setUint8(3, flags);
   view.setUint32(4, captureId >>> 0, true);
   return bytes;
@@ -376,7 +495,7 @@ export function encodeSessionCommandV16(
   const view = new DataView(bytes.buffer);
   view.setUint8(0, 2);
   view.setUint8(1, command);
-  view.setUint8(2, rateHz);
+  view.setUint8(2, rateToWire(rateHz));
   view.setUint8(3, flags);
   view.setUint32(4, captureId >>> 0, true);
   view.setUint16(8, commandId & 0xffff, true);
@@ -395,9 +514,9 @@ export function decodeSessionStatus(view) {
     ver: view.getUint8(0),
     state,
     stateName: SESSION_STATES[state] || "unknown",
-    rateHz: view.getUint8(2),
-    requestedRateHz: view.getUint8(2),
-    appliedRateHz: view.getUint8(2),
+    rateHz: rateFromWire(view.getUint8(2)),
+    requestedRateHz: rateFromWire(view.getUint8(2)),
+    appliedRateHz: rateFromWire(view.getUint8(2)),
     flags,
     captureId: view.getUint32(4, true),
     rateEpoch: view.getUint16(8, true),
@@ -439,9 +558,9 @@ export function decodeSessionStatusV16(view) {
     ver: view.getUint8(0),
     state,
     stateName: SESSION_STATES[state] || "unknown",
-    requestedRateHz: view.getUint8(2),
-    appliedRateHz: view.getUint8(3),
-    rateHz: view.getUint8(3),
+    requestedRateHz: rateFromWire(view.getUint8(2)),
+    appliedRateHz: rateFromWire(view.getUint8(3)),
+    rateHz: rateFromWire(view.getUint8(3)),
     flags,
     errorReason,
     errorName: ERROR_REASONS[errorReason] || "unknown",
@@ -480,15 +599,24 @@ export function decodeSessionStatusV16(view) {
 export function capturePreflight(caps, rateHz, podCount = 1) {
   const warnings = [];
   const mtu = caps?.attMtu || 23;
-  const frameLen = caps?.supportsV16 ? FRAME_V16_LEN : FRAME_V1_LEN;
+  const frameLen = caps?.supportsFused
+    ? FRAME_FUSED_LEN
+    : caps?.supportsV16
+      ? FRAME_V16_LEN
+      : FRAME_V1_LEN;
   const payload = Math.max(0, mtu - 3);
-  const batch = Math.max(1, Math.min(caps?.maxBatchFrames || 1, Math.floor(payload / frameLen) || 1));
+  const maxBatch = caps?.maxBatchFrames || 1;
+  const highRateCap = rateHz >= RATE_HIGH_HZ ? (caps?.supportsFused ? 4 : 2) : maxBatch;
+  const batch = Math.max(
+    1,
+    Math.min(maxBatch, highRateCap, Math.floor(payload / frameLen) || 1)
+  );
   const notifyHz = rateHz / batch;
   if (payload < frameLen) {
     warnings.push(`ATT MTU ${mtu} cannot carry a ${frameLen}-byte frame`);
   }
-  if (rateHz >= 224 && podCount > 1) {
-    warnings.push("224 Hz is only recommended for a single pod");
+  if (rateHz >= RATE_HIGH_HZ && podCount > 1) {
+    warnings.push(`${rateHz} Hz is only recommended for a single pod`);
   }
   if (rateHz >= 112 && batch < 2) {
     warnings.push(`low batching (${batch} frame/notify) at ${rateHz} Hz may drop samples`);

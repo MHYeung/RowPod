@@ -12,6 +12,7 @@ import {
   CFG_SVC,
   CFG_SYNC,
   MOTION_DATA,
+  MOTION_DATA_FUSED,
   MOTION_DATA_V16,
   MOTION_META,
   MOTION_SVC,
@@ -22,6 +23,7 @@ import {
   decodeCaps,
   decodeCfgInfo,
   decodeFrames,
+  decodeFramesFused,
   decodeFramesV16,
   decodeMeta,
   decodeSessionStatus,
@@ -29,6 +31,8 @@ import {
   decodeSyncRsp,
   encodeSessionCommand,
   encodeSessionCommandV16,
+  gyroDpsFromQuat,
+  rateToWire,
 } from "./protocol.js";
 
 export class BleClient {
@@ -37,6 +41,7 @@ export class BleClient {
     this.server = null;
     this.dataChar = null;
     this.dataV16Char = null;
+    this.dataFusedChar = null;
     this.nameChar = null;
     this.syncChar = null;
     this.battChar = null;
@@ -61,6 +66,7 @@ export class BleClient {
     this.sessionStatus = null;
     this.protocolVersion = 1;
     this.usesV16Motion = false;
+    this.usesFusedMotion = false;
     this.advName = "";
     this.onFrame = null;
     this.onStatus = null;
@@ -71,6 +77,7 @@ export class BleClient {
     this.missingFrames = 0;
     this._boundNotify = this._onNotify.bind(this);
     this._boundNotifyV16 = this._onNotifyV16.bind(this);
+    this._boundNotifyFused = this._onNotifyFused.bind(this);
     this._boundSync = this._onSyncNotify.bind(this);
     this._boundSessionStatus = this._onSessionStatusNotify.bind(this);
     this._boundSessionStatusV16 = this._onSessionStatusNotifyV16.bind(this);
@@ -81,6 +88,7 @@ export class BleClient {
     this._motionNotifications = false;
     this._peerHold = false;
     this._nextCommandId = 1;
+    this._lastQuat = null;
   }
 
   get deviceId() {
@@ -139,7 +147,7 @@ export class BleClient {
         this.caps = { ...this.caps, hostAttMtuHint: hostHint };
       }
       const mtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
-      if (mtu >= 25) return mtu;
+      if (mtu >= 27) return mtu;
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
     return this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
@@ -194,6 +202,11 @@ export class BleClient {
         this.dataV16Char = await motion.getCharacteristic(MOTION_DATA_V16);
       } catch (_) {
         this.dataV16Char = null;
+      }
+      try {
+        this.dataFusedChar = await motion.getCharacteristic(MOTION_DATA_FUSED);
+      } catch (_) {
+        this.dataFusedChar = null;
       }
       setStage("read motion metadata");
       const metaView = await metaChar.readValue();
@@ -289,17 +302,29 @@ export class BleClient {
       }
 
       const attMtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
-      /* 22-byte v16 frames need ATT MTU >= 25 (3-byte ATT header + 22). */
+      /* 24-byte fused needs ATT MTU ≥ 27; 22-byte v16 needs ≥ 25. */
+      this.usesFusedMotion = Boolean(
+        this.dataFusedChar && this.caps?.supportsFused && attMtu >= 27
+      );
       this.usesV16Motion = Boolean(
-        this.dataV16Char && this.caps?.supportsV16 && attMtu >= 25
+        !this.usesFusedMotion &&
+          this.dataV16Char &&
+          this.caps?.supportsV16 &&
+          attMtu >= 25
       );
       this._seqTracker = new SequenceTracker({
-        bits: this.usesV16Motion ? 32 : 16,
+        bits: this.usesFusedMotion || this.usesV16Motion ? 32 : 16,
       });
+      this._lastQuat = null;
 
+      const motionLabel = this.usesFusedMotion
+        ? "fused"
+        : this.usesV16Motion
+          ? "v16"
+          : "v1";
       this._setStatus(
         `Connected · ${this.advName || "pod"} · proto v${this.protocolVersion}` +
-          ` · motion ${this.usesV16Motion ? "v16" : "v1"} · MTU ${attMtu}` +
+          ` · motion ${motionLabel} · MTU ${attMtu}` +
           ` · meta v${this.meta.ver} @ ${this.meta.rate_hz} Hz`,
         "ok"
       );
@@ -307,7 +332,13 @@ export class BleClient {
       this.gaps = 0;
       this.missingFrames = 0;
       setStage("subscribe motion");
-      if (this.usesV16Motion) {
+      if (this.usesFusedMotion) {
+        await this.dataFusedChar.startNotifications();
+        this.dataFusedChar.addEventListener(
+          "characteristicvaluechanged",
+          this._boundNotifyFused
+        );
+      } else if (this.usesV16Motion) {
         await this.dataV16Char.startNotifications();
         this.dataV16Char.addEventListener(
           "characteristicvaluechanged",
@@ -363,14 +394,16 @@ export class BleClient {
     });
   }
 
-  /** @param {56|112|224} hz */
+  /** @param {56|112|224|448} hz */
   async setRate(hz) {
     return this._queueGatt(async () => {
-      if (![56, 112, 224].includes(hz)) {
+      if (![56, 112, 224, 448].includes(hz)) {
         throw new Error(`unsupported rate ${hz}`);
       }
       if (this.rateChar) {
-        await this.rateChar.writeValueWithoutResponse(Uint8Array.of(hz));
+        await this.rateChar.writeValueWithoutResponse(
+          Uint8Array.of(rateToWire(hz))
+        );
       }
       this.meta.rate_hz = hz;
     });
@@ -562,7 +595,15 @@ export class BleClient {
   }
 
   async _stopMotionNotifications() {
-    if (this.usesV16Motion && this.dataV16Char) {
+    if (this.usesFusedMotion && this.dataFusedChar) {
+      try {
+        this.dataFusedChar.removeEventListener(
+          "characteristicvaluechanged",
+          this._boundNotifyFused
+        );
+        await this.dataFusedChar.stopNotifications();
+      } catch (_) { /* ignore */ }
+    } else if (this.usesV16Motion && this.dataV16Char) {
       try {
         this.dataV16Char.removeEventListener(
           "characteristicvaluechanged",
@@ -590,7 +631,13 @@ export class BleClient {
   async resumeNotifications() {
     return this._queueGatt(async () => {
       if (this._motionNotifications) return false;
-      if (this.usesV16Motion && this.dataV16Char) {
+      if (this.usesFusedMotion && this.dataFusedChar) {
+        await this.dataFusedChar.startNotifications();
+        this.dataFusedChar.addEventListener(
+          "characteristicvaluechanged",
+          this._boundNotifyFused
+        );
+      } else if (this.usesV16Motion && this.dataV16Char) {
         await this.dataV16Char.startNotifications();
         this.dataV16Char.addEventListener(
           "characteristicvaluechanged",
@@ -622,10 +669,13 @@ export class BleClient {
   }
 
   resyncSequence() {
-    const bits = this._seqTracker?.bits || (this.usesV16Motion ? 32 : 16);
+    const bits =
+      this._seqTracker?.bits ||
+      (this.usesFusedMotion || this.usesV16Motion ? 32 : 16);
     this._seqTracker = new SequenceTracker({ bits });
     this.gaps = 0;
     this.missingFrames = 0;
+    this._lastQuat = null;
   }
 
   _emitFrames(frames) {
@@ -640,8 +690,20 @@ export class BleClient {
       const tracked = this._seqTracker.observe(frame.sampleIndex ?? frame.seq);
       this.gaps = this._seqTracker.gapEvents;
       this.missingFrames = this._seqTracker.missingFrames;
+      let eng = frame.eng;
+      if (frame.quat) {
+        if (tracked.missing) {
+          this._lastQuat = frame.quat;
+        } else {
+          const dt = 1 / Math.max(1, this.meta.rate_hz || RATE_LIVE_HZ);
+          const gyro = gyroDpsFromQuat(this._lastQuat, frame.quat, dt);
+          this._lastQuat = frame.quat;
+          eng = { ...eng, ...gyro };
+        }
+      }
       const enriched = {
         ...frame,
+        eng,
         sampleIndex: tracked.logical,
         missing: tracked.missing,
       };
@@ -662,6 +724,15 @@ export class BleClient {
     const view = ev.target.value;
     try {
       this._emitFrames(decodeFramesV16(view, this.meta));
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  _onNotifyFused(ev) {
+    const view = ev.target.value;
+    try {
+      this._emitFrames(decodeFramesFused(view, this.meta));
     } catch (e) {
       console.warn(e);
     }
@@ -725,6 +796,7 @@ export class BleClient {
     }
     this.dataChar = null;
     this.dataV16Char = null;
+    this.dataFusedChar = null;
     this.nameChar = null;
     this.syncChar = null;
     this.battChar = null;

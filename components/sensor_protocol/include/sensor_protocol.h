@@ -15,6 +15,8 @@ extern "C" {
 #define SENSOR_PROTO_META_UUID_STR  "9b7e1002-2b2f-4f71-9b86-4bb2e6d54f00"
 /** Additive v16 motion notify: uint32 sample_index + 9×int16. */
 #define SENSOR_PROTO_DATA_V16_UUID_STR "9b7e1003-2b2f-4f71-9b86-4bb2e6d54f00"
+/** On-device Mahony: uint32 sample_index + Q15 quat + accel + mag. */
+#define SENSOR_PROTO_DATA_FUSED_UUID_STR "9b7e1004-2b2f-4f71-9b86-4bb2e6d54f00"
 
 /** Pod configuration / software-sync service (fixed protocol UUIDs). */
 #define SENSOR_PROTO_CFG_SVC_UUID_STR   "9b7e2000-2b2f-4f71-9b86-4bb2e6d54f00"
@@ -34,6 +36,7 @@ extern "C" {
 
 #define SENSOR_PROTO_FRAME_LEN      20
 #define SENSOR_PROTO_FRAME_V16_LEN  22
+#define SENSOR_PROTO_FRAME_FUSED_LEN 24
 #define SENSOR_PROTO_META_LEN       12
 #define SENSOR_PROTO_CFG_INFO_LEN   4
 #define SENSOR_PROTO_CFG_BATT_LEN   4
@@ -52,10 +55,20 @@ extern "C" {
 #define SENSOR_PROTO_FORMAT_VER     1
 /** Additive protocol version for v16 characteristics. */
 #define SENSOR_PROTO_FORMAT_VER_V16 2
+/** Fused quaternion notify (Mahony on-device). */
+#define SENSOR_PROTO_FORMAT_VER_FUSED 3
 /** Sensor-native 6-DoF rates; sequence numbers are therefore a uniform clock. */
-#define SENSOR_PROTO_RATE_LIVE_HZ     56
-#define SENSOR_PROTO_RATE_LOG_HZ     112
-#define SENSOR_PROTO_RATE_LOG_MAX_HZ 224
+#define SENSOR_PROTO_RATE_LIVE_HZ        56
+#define SENSOR_PROTO_RATE_LOG_HZ        112
+#define SENSOR_PROTO_RATE_HIGH_HZ       224
+/** QMI8658A 6-DoF ODR 448.4 Hz (CTRL2/3 code 0x4). Accel-only 500 Hz is not used. */
+#define SENSOR_PROTO_RATE_CAPTURE_HZ    448
+#define SENSOR_PROTO_RATE_LOG_MAX_HZ    SENSOR_PROTO_RATE_CAPTURE_HZ
+/**
+ * uint8 wire token for 448 Hz. Packed rate fields are one byte, so 448 cannot
+ * be sent as Hertz; 255 is reserved for this profile.
+ */
+#define SENSOR_PROTO_RATE_CAPTURE_WIRE  255
 /** Host-selected workout processing profile. */
 #define SENSOR_PROTO_PROFILE_GENERAL 0
 #define SENSOR_PROTO_PROFILE_HYROX   1
@@ -96,10 +109,28 @@ extern "C" {
 #define SENSOR_PROTO_CAP_FLAG_DRAIN_BARRIER   0x04
 #define SENSOR_PROTO_CAP_FLAG_APPLIED_RATE    0x08
 #define SENSOR_PROTO_CAP_FLAG_32BIT_SEQ       0x10
+#define SENSOR_PROTO_CAP_FLAG_FUSED_FRAME     0x20
 /** Rate support bitmask bits. */
 #define SENSOR_PROTO_RATE_MASK_56             0x01
 #define SENSOR_PROTO_RATE_MASK_112            0x02
 #define SENSOR_PROTO_RATE_MASK_224            0x04
+#define SENSOR_PROTO_RATE_MASK_448            0x08
+
+static inline uint8_t sensor_proto_rate_to_wire(uint16_t hz)
+{
+    if (hz >= SENSOR_PROTO_RATE_CAPTURE_HZ) {
+        return SENSOR_PROTO_RATE_CAPTURE_WIRE;
+    }
+    return (uint8_t)hz;
+}
+
+static inline uint16_t sensor_proto_rate_from_wire(uint8_t wire)
+{
+    if (wire == SENSOR_PROTO_RATE_CAPTURE_WIRE) {
+        return SENSOR_PROTO_RATE_CAPTURE_HZ;
+    }
+    return wire;
+}
 /** @deprecated use SENSOR_PROTO_RATE_LIVE_HZ */
 #define SENSOR_PROTO_RATE_HZ        SENSOR_PROTO_RATE_LIVE_HZ
 
@@ -123,6 +154,10 @@ typedef struct {
     int16_t mx;
     int16_t my;
     int16_t mz;
+    int16_t qw; /**< Q15, 32767 = 1.0 */
+    int16_t qx;
+    int16_t qy;
+    int16_t qz;
 } sensor_proto_sample_t;
 
 /**
@@ -165,6 +200,29 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(sensor_proto_frame_v16_t) == SENSOR_PROTO_FRAME_V16_LEN,
                "v16 frame size");
+
+/**
+ * @brief Fused attitude frame (packed little-endian).
+ *
+ * Wire (24 B): uint32 sample_index; int16 qw,qx,qy,qz (Q15); ax,ay,az; mx,my,mz.
+ * Gyro is consumed on-device by Mahony and omitted to shrink the notify.
+ */
+typedef struct __attribute__((packed)) {
+    uint32_t sample_index;
+    int16_t qw;
+    int16_t qx;
+    int16_t qy;
+    int16_t qz;
+    int16_t ax;
+    int16_t ay;
+    int16_t az;
+    int16_t mx;
+    int16_t my;
+    int16_t mz;
+} sensor_proto_frame_fused_t;
+
+_Static_assert(sizeof(sensor_proto_frame_fused_t) == SENSOR_PROTO_FRAME_FUSED_LEN,
+               "fused frame size");
 
 typedef struct __attribute__((packed)) {
     uint8_t ver;
@@ -297,10 +355,14 @@ _Static_assert(sizeof(sensor_proto_session_status_v16_t) == SENSOR_PROTO_CFG_STA
 void sensor_proto_pack_frame(uint8_t out[SENSOR_PROTO_FRAME_LEN], const sensor_proto_frame_t *frame);
 void sensor_proto_pack_frame_v16(uint8_t out[SENSOR_PROTO_FRAME_V16_LEN],
                                  const sensor_proto_frame_v16_t *frame);
+void sensor_proto_pack_frame_fused(uint8_t out[SENSOR_PROTO_FRAME_FUSED_LEN],
+                                   const sensor_proto_frame_fused_t *frame);
 void sensor_proto_sample_to_frame_v1(sensor_proto_frame_t *out,
                                      const sensor_proto_sample_t *sample);
 void sensor_proto_sample_to_frame_v16(sensor_proto_frame_v16_t *out,
                                       const sensor_proto_sample_t *sample);
+void sensor_proto_sample_to_frame_fused(sensor_proto_frame_fused_t *out,
+                                        const sensor_proto_sample_t *sample);
 void sensor_proto_pack_meta(uint8_t out[SENSOR_PROTO_META_LEN], const sensor_proto_meta_t *meta);
 void sensor_proto_pack_caps(uint8_t out[SENSOR_PROTO_CFG_CAPS_LEN],
                             const sensor_proto_caps_t *caps);

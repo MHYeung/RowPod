@@ -63,7 +63,7 @@ node web/ble_plotter/protocol.test.js
 - Read/Write `…2002`: UTF-8 advertised/position name (≤20 chars)
 - Write/Notify `…2003`: software sync request/response
 - Read `…2004`: battery `u16 mV LE + u8 percent + u8 flags` (bit0 = valid)
-- Read/Write `…2005`: sensor-native rate Hz (`56`, `112`, or `224`)
+- Read/Write `…2005`: sensor-native rate Hz (`56`, `112`, `224`, or `448`; 448 is wire `255`)
 - Read/Write `…2006`: workout profile (`0` general, `1` HYROX)
 - Write `…2007`: legacy 8-byte session command
 - Read/Notify `…2008`: legacy 36-byte session status
@@ -75,7 +75,7 @@ node web/ble_plotter/protocol.test.js
 ### Rates
 
 - Connected live monitor: **56 Hz**
-- Logging: **224 Hz** (one pod) or **112 Hz** (2+ pods); CSV v6 records
+- Logging: **448 Hz** (one pod) or **112 Hz** (2+ pods); CSV v6 records
   calibration, stationary phases, quality metrics, and integrity counters
 - Capture lifecycle: `PREPARE → CONFIGURE → BIAS_START → MOTION →
   STOP_REQUESTED → DRAIN → FINALIZE`; `FINALIZE` requires `drain_done`
