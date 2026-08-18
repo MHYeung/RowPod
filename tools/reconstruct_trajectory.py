@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Quality-gated short-window 9-DoF trajectory reconstruction.
+"""Quality-gated short-window trajectory reconstruction.
 
-This is intended for 1-3 second arm strokes bracketed by stationary intervals.
-It does not make unconstrained inertial position observable.
+Prefers on-device Mahony quaternions from CSV v7. v6 files without `qw..qz`
+fall back to host AHRS from gyro/mag. This does not make unconstrained
+inertial position observable.
 """
 
 from __future__ import annotations
@@ -117,24 +118,63 @@ def parse_log(path: Path, device_id: str | None):
     return comments, rows, selected
 
 
+def _has(rows, cols):
+    return all(c in rows[0] for c in cols)
+
+
+def firmware_quats(rows):
+    """Return on-device Mahony quaternions when the CSV actually logged them."""
+    if not _has(rows, ("qw", "qx", "qy", "qz")):
+        return None
+    parsed = []
+    for row in rows:
+        try:
+            q = tuple(float(row[c]) for c in ("qw", "qx", "qy", "qz"))
+        except (TypeError, ValueError):
+            parsed.append(None)
+            continue
+        if not all(math.isfinite(x) for x in q) or norm(q) < 0.5:
+            parsed.append(None)
+        else:
+            parsed.append(qnorm(q))
+    valid = sum(q is not None for q in parsed)
+    if valid < 0.9 * len(parsed):
+        return None
+    last = next(q for q in parsed if q is not None)
+    out = []
+    for q in parsed:
+        if q is None:
+            out.append(last)
+        else:
+            last = q
+            out.append(q)
+    print("using on-device Mahony quaternions")
+    return out
+
+
 def sample_vectors(rows):
     t0 = float(rows[0]["sample_ms"])
     t = [(float(r["sample_ms"]) - t0) / 1000 for r in rows]
     accel_cols = ("ax_clean_g", "ay_clean_g", "az_clean_g")
-    gyro_cols = ("gx_clean_dps", "gy_clean_dps", "gz_clean_dps")
-    mag_cols = ("mx_clean_G", "my_clean_G", "mz_clean_G")
-    cleaned = all(c in rows[0] for c in (*accel_cols, *gyro_cols, *mag_cols))
-    if cleaned:
-        print("using cleaned engineering columns")
-    else:
+    if not _has(rows, accel_cols):
         accel_cols = ("ax_g", "ay_g", "az_g")
-        gyro_cols = ("gx_dps", "gy_dps", "gz_dps")
-        mag_cols = ("mx_G", "my_G", "mz_G")
+    else:
+        print("using cleaned engineering columns")
     acc = [tuple(float(r[c]) for c in accel_cols) for r in rows]
-    gyro = [tuple(math.radians(float(r[c])) for c in gyro_cols) for r in rows]
-    if all(c in rows[0] for c in ("mx_cal_G", "my_cal_G", "mz_cal_G")):
-        mag_cols = ("mx_cal_G", "my_cal_G", "mz_cal_G")
-    mag = [tuple(float(r[c]) for c in mag_cols) for r in rows]
+    gyro = None
+    for gyro_cols in (("gx_clean_dps", "gy_clean_dps", "gz_clean_dps"),
+                      ("gx_dps", "gy_dps", "gz_dps")):
+        if _has(rows, gyro_cols):
+            gyro = [tuple(math.radians(float(r[c])) for c in gyro_cols)
+                    for r in rows]
+            break
+    mag = None
+    for mag_cols in (("mx_cal_G", "my_cal_G", "mz_cal_G"),
+                     ("mx_clean_G", "my_clean_G", "mz_clean_G"),
+                     ("mx_G", "my_G", "mz_G")):
+        if _has(rows, mag_cols):
+            mag = [tuple(float(r[c]) for c in mag_cols) for r in rows]
+            break
     return t, acc, gyro, mag
 
 
@@ -147,7 +187,10 @@ def quality_report(comments, rows, t):
         seq = [int(r["seq"]) for r in rows]
         missing = sum(((b - a) & 0xFFFF) - 1 for a, b in zip(seq, seq[1:]))
     raw_cols = ("ax_raw", "ay_raw", "az_raw", "gx_raw", "gy_raw", "gz_raw")
-    rails = sum(any(abs(int(r[c])) >= 32760 for c in raw_cols) for r in rows)
+    if _has(rows, raw_cols):
+        rails = sum(any(abs(int(r[c])) >= 32760 for c in raw_cols) for r in rows)
+    else:
+        rails = 0
     start_still = sum(r.get("capture_phase") == "bias_start" and
                       r.get("stationary") == "1" for r in rows)
     end_still = sum(r.get("capture_phase") == "bias_end" and
@@ -238,7 +281,11 @@ def write_output(path, rows, t, quats, position, velocity, linear):
         writer = csv.writer(f)
         writer.writerow(fields)
         for row, ti, q, p, v, a in zip(rows, t, quats, position, velocity, linear):
-            writer.writerow([f"{ti * 1000:.3f}", row["seq"], *p, *v, *a, *q])
+            writer.writerow([
+                f"{ti * 1000:.3f}",
+                row.get("sample_index", row.get("seq", "")),
+                *p, *v, *a, *q,
+            ])
 
 
 def parse_vector(text):
@@ -262,9 +309,12 @@ def main():
 
     comments, rows, selected = parse_log(args.csv_log, args.device_id)
     if args.clean_outliers:
-        from clean_motion_csv import add_clean_columns
-        repaired, rails = add_clean_columns(rows)
-        print(f"outlier preprocessing repaired={repaired} rails={rails}")
+        if "ax_raw" not in rows[0]:
+            print("CSV v7 has no raw columns; skipping --clean-outliers")
+        else:
+            from clean_motion_csv import add_clean_columns
+            repaired, rails = add_clean_columns(rows)
+            print(f"outlier preprocessing repaired={repaired} rails={rails}")
     t, acc, gyro, mag = sample_vectors(rows)
     checks, stats = quality_report(comments, rows, t)
     print(f"device={selected} samples={len(rows)} rate={stats['rate']}Hz "
@@ -280,9 +330,17 @@ def main():
     if not start_idx or not end_idx:
         print("Stationary bias windows are required.", file=sys.stderr)
         return 2
-    gyro_bias_start = mean_vec([gyro[i] for i in start_idx])
-    gyro_bias_end = mean_vec([gyro[i] for i in end_idx])
-    quats = estimate_orientation(t, acc, gyro, mag, gyro_bias_start, gyro_bias_end)
+    quats = firmware_quats(rows)
+    if quats is None:
+        if gyro is None or mag is None:
+            print("CSV has neither Mahony quaternions nor gyro/mag for host AHRS.",
+                  file=sys.stderr)
+            return 2
+        gyro_bias_start = mean_vec([gyro[i] for i in start_idx])
+        gyro_bias_end = mean_vec([gyro[i] for i in end_idx])
+        quats = estimate_orientation(
+            t, acc, gyro, mag, gyro_bias_start, gyro_bias_end
+        )
     position, velocity, linear = integrate_trajectory(
         t, acc, quats, start_idx, end_idx, args.end_displacement_m
     )

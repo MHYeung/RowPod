@@ -80,7 +80,10 @@ rate fields cannot store 448, so that profile is encoded as wire value `255`
 
 ## CSV provenance
 
-CSV v6 adds `sample_index`, `missing_frames`, `gap_events`, protocol version,
-applied rate, ATT MTU, produced/sent/final sample boundaries, drain completion,
-and queue high-water fields. `arrival_ms` remains useful for browser-latency
-diagnostics; `sample_ms` is derived from `sample_index` and the rate epoch.
+CSV v7 logs on-device Mahony `qw,qx,qy,qz`, body accel, and the mag vector the
+filter consumed. `sample_index`, `missing_frames`, `gap_events`, and the three
+device drop counters remain for integrity. Raw, clean, cal, reconstructed gyro,
+and per-row session snapshots were dropped; those belong in status CSV or
+headers. `arrival_ms` remains useful for browser-latency diagnostics;
+`sample_ms` is derived from `sample_index` and the rate epoch. v6 files still
+reconstruct via host AHRS when gyro columns are present.

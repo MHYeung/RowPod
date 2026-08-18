@@ -1,21 +1,14 @@
 /** Column header row (data table starts after # meta comments). */
 export const CSV_COLUMNS =
-  "position,device_id,pod_id,rate_hz,applied_rate_hz,protocol_ver,synced_ms,arrival_ms,sample_ms,seq,sample_index," +
-  "missing_frames,gap_events,capture_id,rate_epoch,firmware_state,device_first_sample,device_last_produced," +
-  "device_last_sent,device_final_sample,device_has_samples,device_drain_done,device_queue_depth,device_queue_high_water," +
-  "device_sensor_dropped,device_transport_dropped,device_notify_failures,device_att_mtu,capture_phase,stationary," +
-  "accel_norm_g,gyro_norm_dps,mag_norm_G,outlier_mask,outlier_reason," +
-  "training_profile,training_station,training_reps,training_effort,training_working," +
-  "ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,mx_G,my_G,mz_G," +
-  "ax_clean_g,ay_clean_g,az_clean_g,gx_clean_dps,gy_clean_dps,gz_clean_dps," +
-  "mx_clean_G,my_clean_G,mz_clean_G,mx_cal_G,my_cal_G,mz_cal_G," +
-  "ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw,mx_raw,my_raw,mz_raw";
+  "position,device_id,pod_id,rate_hz,sample_index,sample_ms,arrival_ms," +
+  "capture_phase,stationary,qw,qx,qy,qz,ax_g,ay_g,az_g,mx_G,my_G,mz_G," +
+  "missing_frames,gap_events,sensor_dropped,transport_dropped,notify_failures";
 
 /** Default ring capacity: ~6 min @ 448 Hz one pod, or ~4 min @ 4×112 Hz. */
 const DEFAULT_CAPACITY = 120000;
 
 /**
- * Ring-buffer CSV logger.
+ * Ring-buffer CSV logger for on-device Mahony output.
  * Newest samples overwrite the oldest once capacity is reached.
  */
 export class CsvLogger {
@@ -105,8 +98,8 @@ export class CsvLogger {
   }
 
   /**
-   * @param {{seq:number, sampleIndex?:number, eng:object, raw:object}} frame
-   * @param {{position:string,deviceId:string,podId:number,rateHz:number,syncedMs?:number,magCalibration?:object,quality?:object,sessionStatus?:object,missingFrames?:number,gapEvents?:number,protocolVersion?:number}} pod
+   * @param {{seq:number, sampleIndex?:number, eng:object, quat?:{qw:number,qx:number,qy:number,qz:number}}} frame
+   * @param {{position:string,deviceId:string,podId:number,rateHz:number,sessionStatus?:object,missingFrames?:number,gapEvents?:number}} pod
    */
   push(frame, pod) {
     if (!this.recording) return;
@@ -135,78 +128,33 @@ export class CsvLogger {
       this.phase = "motion";
       this.state = "motion";
     }
-    const arrivalMs = elapsedMs.toFixed(1);
-    const seqDelta = sampleIndex - st.firstSeq;
-    const sampleMs = ((Math.max(0, seqDelta) * 1000) / st.rateHz).toFixed(1);
-    const syncedMs =
-      pod.syncedMs != null ? Number(pod.syncedMs).toFixed(1) : arrivalMs;
+    const sampleMs = ((Math.max(0, sampleIndex - st.firstSeq) * 1000) / st.rateHz);
     const e = frame.eng;
-    const r = frame.raw;
-    const quality = pod.quality || { eng: e, mask: 0, reason: "" };
-    const clean = quality.eng || e;
-    const training = pod.training || {
-      profile: 0, station: "", reps: 0, effort: 0, working: false,
-    };
+    const q = frame.quat;
     const protocol = pod.sessionStatus || {};
     const accelNorm = Math.hypot(e.ax, e.ay, e.az);
-    const gyroNorm = Math.hypot(e.gx, e.gy, e.gz);
-    const magNorm = Math.hypot(e.mx, e.my, e.mz);
-    const cal = pod.magCalibration;
-    const mc = cal ? {
-      mx: (e.mx - cal.offset[0]) * cal.scale[0],
-      my: (e.my - cal.offset[1]) * cal.scale[1],
-      mz: (e.mz - cal.offset[2]) * cal.scale[2],
-    } : { mx: e.mx, my: e.my, mz: e.mz };
-    const stationary = Math.abs(accelNorm - 1) <= 0.08 && gyroNorm <= 3;
+    const stationary = Math.abs(accelNorm - 1) <= 0.08 ? 1 : 0;
     const line = [
       csvEscape(pod.position || ""),
       id,
       pod.podId ?? "",
       st.rateHz,
-      protocol.appliedRateHz ?? protocol.rateHz ?? st.rateHz,
-      pod.protocolVersion ?? protocol.protocol ?? protocol.ver ?? "",
-      syncedMs,
-      arrivalMs,
-      sampleMs,
-      frame.seq,
       sampleIndex,
+      sampleMs.toFixed(1),
+      elapsedMs.toFixed(1),
+      this.phase,
+      stationary,
+      q ? fmt(q.qw, 6) : "",
+      q ? fmt(q.qx, 6) : "",
+      q ? fmt(q.qy, 6) : "",
+      q ? fmt(q.qz, 6) : "",
+      fmt(e.ax, 6), fmt(e.ay, 6), fmt(e.az, 6),
+      fmt(e.mx, 6), fmt(e.my, 6), fmt(e.mz, 6),
       pod.missingFrames ?? "",
       pod.gapEvents ?? "",
-      protocol.captureId ?? this._session?.captureId ?? "",
-      protocol.rateEpoch ?? "",
-      csvEscape(protocol.stateName || protocol.state || ""),
-      protocol.firstSample ?? protocol.firstSeq ?? "",
-      protocol.lastProduced ?? protocol.lastSeq ?? "",
-      protocol.lastSent ?? "",
-      protocol.finalSample ?? "",
-      protocol.hasSamples ? 1 : 0,
-      protocol.drainDone ? 1 : 0,
-      protocol.queueDepth ?? "",
-      protocol.queueHighWater ?? "",
       protocol.sensorDropped ?? "",
       protocol.transportDropped ?? "",
       protocol.notifyFailures ?? "",
-      protocol.attMtu ?? "",
-      this.phase,
-      stationary ? 1 : 0,
-      accelNorm, gyroNorm, magNorm,
-      quality.mask || 0,
-      csvEscape(quality.reason || ""),
-      training.profile || 0,
-      csvEscape(training.station || ""),
-      training.reps || 0,
-      training.effort || 0,
-      training.working ? 1 : 0,
-      e.ax, e.ay, e.az,
-      e.gx, e.gy, e.gz,
-      e.mx, e.my, e.mz,
-      clean.ax, clean.ay, clean.az,
-      clean.gx, clean.gy, clean.gz,
-      clean.mx, clean.my, clean.mz,
-      mc.mx, mc.my, mc.mz,
-      r.ax, r.ay, r.az,
-      r.gx, r.gy, r.gz,
-      r.mx, r.my, r.mz,
     ].join(",");
 
     if (this.count === this.capacity) {
@@ -249,7 +197,7 @@ export class CsvLogger {
     const iso = new Date().toISOString();
     const pods = session.pods || [];
     const lines = [
-      "# C3-Tracker CSV v6",
+      "# C3-Tracker CSV v7",
       `# created_iso=${iso}`,
       `# format=comment_meta_then_columns`,
       `# live_rate_hz=${session.liveRateHz}`,
@@ -260,11 +208,9 @@ export class CsvLogger {
       `# pod_count=${pods.length}`,
       `# required_stillness_ms=${session.stillnessMs || 2000}`,
       "# timebase=arrival_ms is ms since Start; sample_ms is sample_index-derived at log_rate_hz",
-      "# synced_ms=browser estimate (software sync offset); not sample-locked IMU time",
-      "# units=ax/ay/az g; gx/gy/gz dps; mx/my/mz gauss; raw=int16 sensor LSB",
-      "# stationary_candidate=abs(|accel|-1)<=0.08g and |gyro|<=3dps",
-      "# outlier_mask=1 accel rail, 2 gyro rail, 4 mag rail; clean columns are display-safe",
-      "# device_* columns are pod status snapshots; sample_index/sample_ms remain frame-derived",
+      "# units=Mahony qw..qz unit quaternion; ax/ay/az g (body); mx/my/mz gauss as consumed by Mahony",
+      "# stationary_candidate=abs(|accel|-1)<=0.08g (accel only; fused CSV omits raw gyro)",
+      "# integrity=missing_frames/gap_events are host sequence; sensor/transport/notify are device snapshots",
       `# training_profile=${session.trainingProfile || 0};station=${session.trainingStation || ""}`,
       `# preflight=${csvEscape(session.preflightSummary || "")}`,
     ];
@@ -294,6 +240,11 @@ export class CsvLogger {
   _emit() {
     if (this.onChange) this.onChange(this);
   }
+}
+
+function fmt(value, digits) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : "";
 }
 
 function csvEscape(s) {

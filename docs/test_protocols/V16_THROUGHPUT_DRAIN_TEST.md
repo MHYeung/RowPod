@@ -37,7 +37,7 @@ Pair this with an external current logger when assessing energy use.
 3. Start a status log on the Battery test tab (60 s interval).
 4. Run the capture case from the CSV log or HYROX tab.
 5. On Stop, watch integrity for `drain✓` before the live rate restores.
-6. Download motion CSV v6 and status CSV v3.
+6. Download motion CSV v7 and status CSV v3.
 
 ## Forced-fault hooks
 

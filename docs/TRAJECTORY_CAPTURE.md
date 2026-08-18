@@ -6,7 +6,7 @@ constrains heading; it does not observe translation.
 
 ## Before collecting data
 
-1. Flash the current firmware and open dashboard v16 over HTTPS.
+1. Flash the current firmware and open dashboard v16 over HTTPS (`/?v=16.8` locally).
 2. Connect one pod and select **Calibrate mag (30 s)**.
 3. Move the assembled pod in a slow figure-8 and tumble it through
    nose-down / tail-down / each side-down. Flat table spins leave one axis
@@ -23,8 +23,10 @@ or test room.
 1. Press **Start** and remain completely still for the indicated two seconds.
 2. Perform one short stroke. Keep the total capture below eight seconds.
 3. Press **Stop**, then remain still for the final two seconds.
-4. Download the CSV. A valid v6 file contains `bias_start`, `motion`, and
-   `bias_end` phases plus calibrated magnetic columns and integrity fields.
+4. Download the CSV. A valid v7 file contains `bias_start`, `motion`, and
+   `bias_end` phases, on-device Mahony `qw..qz`, body accel, and the magnetometer
+   vector Mahony consumed. Integrity counters stay in-row; raw/clean/cal
+   duplicates do not.
 
 The firmware uses native 56/112/224/448 Hz sensor-clock profiles, ±16 g, ±2048 dps,
 400 kHz I2C, DRDY loss accounting, and BLE packet batching. Single-pod logging
@@ -46,11 +48,10 @@ python tools/reconstruct_trajectory.py path\capture.csv `
   --clean-outliers --output trajectory.csv
 ```
 
-This preserves the original CSV and replaces only flagged engineering
-samples in memory using neighboring valid samples. To inspect the repair,
-export a separate file with `tools/clean_motion_csv.py`; it adds
-`outlier_mask`, `outlier_reason`, and `*_clean_*` columns without deleting raw
-data.
+This preserves the original CSV and, on v6 debug dumps only, replaces flagged
+engineering samples in memory using neighboring valid samples. To inspect a v6
+repair, export a separate file with `tools/clean_motion_csv.py`. CSV v7 has no
+raw columns; reconstruction uses firmware quaternions instead.
 
 For a stroke known to return to its exact starting point, add the external
 endpoint constraint:

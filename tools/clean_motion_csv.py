@@ -163,6 +163,10 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     comments, rows = read_csv(args.input)
+    if "ax_raw" not in rows[0] or "gx_dps" not in rows[0]:
+        raise SystemExit(
+            "clean_motion_csv.py is for CSV v6 debug dumps with raw/gyro columns"
+        )
     repaired, rails = add_clean_columns(rows)
     output = args.output or args.input.with_name(
         f"{args.input.stem}_cleaned{args.input.suffix}"

@@ -12,7 +12,7 @@ const DEFAULT_CAPACITY = 20000;
  * @brief Browser-side endurance-test status logger.
  *
  * Each row is a low-rate health snapshot; it complements, rather than replaces,
- * raw motion CSV logging. Raw frames remain necessary to investigate a fault.
+ * the fused motion CSV (Mahony quaternion + body accel/mag).
  */
 export class StatusLogger {
   constructor(opts = {}) {

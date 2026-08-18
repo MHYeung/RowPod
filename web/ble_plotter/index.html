@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>C3-Tracker Web BLE</title>
-  <link rel="stylesheet" href="styles.css?v=16.7" />
+  <link rel="stylesheet" href="styles.css?v=16.8" />
 </head>
 <body>
   <header>
@@ -126,13 +126,13 @@
       for one pod and 112 Hz for two or more (prefers max rate over zero-loss)
       and brackets motion with two-second stationary bias intervals.
       Start runs a transport preflight; stop waits for a device drain-complete barrier.
-      The CSV keeps raw values plus outlier flags and display-safe clean columns.
+      The CSV stores on-device Mahony quaternions plus the accel and mag the filter used.
     </p>
     <section class="log-controls">
       <button id="btnLogStart" type="button" disabled>Start</button>
       <button id="btnLogStop" type="button" disabled>Stop</button>
       <button id="btnMagCal" type="button" disabled>Calibrate mag (30 s)</button>
-      <button id="btnLogDownload" type="button" disabled>Download CSV (raw + clean)</button>
+      <button id="btnLogDownload" type="button" disabled>Download CSV (Mahony)</button>
       <button id="btnLogClear" type="button" disabled>Clear</button>
       <span class="status">Rows: <strong id="logRows">0</strong> · <strong id="logState">idle</strong></span>
     </section>
@@ -188,6 +188,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=16.7"></script>
+  <script type="module" src="app.js?v=16.8"></script>
 </body>
 </html>

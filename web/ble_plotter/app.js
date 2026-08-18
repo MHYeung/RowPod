@@ -70,7 +70,7 @@ try {
       !btnTestStart || !btnTestStop || !btnTestDownload || !btnTestClear ||
       !testLabelEl || !testIntervalEl || !testElapsedEl || !testRowsEl ||
       !testStateEl || !testLatestEl || !document.getElementById("captureIntegrity")) {
-    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=16.7");
+    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=16.8");
   }
 
   const plotAccel = new MultiPlot(document.getElementById("plotAccel"), ["ax", "ay", "az"], {
@@ -741,14 +741,9 @@ try {
       deviceId: session.id,
       podId: session.podId,
       rateHz: session.client.meta.rate_hz,
-      syncedMs,
-      magCalibration: magCal.get(session.id),
-      quality,
       sessionStatus: session.sessionStatus,
       missingFrames: session.missingFrames || 0,
       gapEvents: session.gaps || 0,
-      protocolVersion: session.protocolVersion || session.client.protocolVersion,
-      training: hyrox.snapshot(),
     });
     updateHyroxUi();
   };

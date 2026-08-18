@@ -19,7 +19,7 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open **http://localhost:8080/?v=16** (not `file://`). Hard-refresh if UI looks stale.
+Open **http://localhost:8080/?v=16.8** (not `file://`). Hard-refresh if UI looks stale.
 
 Protocol unit tests (no browser):
 
@@ -43,7 +43,7 @@ node web/ble_plotter/protocol.test.js
    - **Summary** — fleet cards + capture integrity (MTU, missing frames, drops)
    - **Plots** — overlay accel / gyro / mag
    - **Orientation** — selected-pod cube
-   - **CSV log** — tagged multi-pod samples (CSV v6)
+   - **CSV log** — fused Mahony samples (CSV v7)
    - **Battery test** — low-rate per-pod endurance/status CSV
 
 ## Protocol
@@ -75,8 +75,8 @@ node web/ble_plotter/protocol.test.js
 ### Rates
 
 - Connected live monitor: **56 Hz**
-- Logging: **448 Hz** (one pod) or **112 Hz** (2+ pods); CSV v6 records
-  calibration, stationary phases, quality metrics, and integrity counters
+- Logging: **448 Hz** (one pod) or **112 Hz** (2+ pods); CSV v7 records
+  Mahony quaternions, body accel/mag, stationary phases, and drop counters
 - Capture lifecycle: `PREPARE → CONFIGURE → BIAS_START → MOTION →
   STOP_REQUESTED → DRAIN → FINALIZE`; `FINALIZE` requires `drain_done`
 - No motion CCCD → sampling off (no IMU broadcast)
