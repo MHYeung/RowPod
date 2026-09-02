@@ -87,3 +87,11 @@ and per-row session snapshots were dropped; those belong in status CSV or
 headers. `arrival_ms` remains useful for browser-latency diagnostics;
 `sample_ms` is derived from `sample_index` and the rate epoch. v6 files still
 reconstruct via host AHRS when gyro columns are present.
+
+## Software sync (`…2003`)
+
+Request: 8-byte `uint64 client_ms`. Response: 20 bytes —
+`client_ms`, `device_us` (`esp_timer_get_time`), then a **32-bit
+`sample_index`** at offset 16. Older firmware wrote a 16-bit seq plus two pad
+zeros; hosts must still accept that. RowPod fits `hostMs = a * sampleIndex + b`
+from repeated exchanges instead of timestamping BLE notify arrival.

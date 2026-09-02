@@ -60,6 +60,8 @@ bool ble_tracker_is_streaming(void);
  *
  * SENSOR_PROTO_PROFILE_HYROX requests the high-rate capture policy; rep and
  * station metrics remain host-side because the browser owns the session UI.
+ * SENSOR_PROTO_PROFILE_ROWING is a host tag only; live 56 Hz remains the
+ * default so a multi-oar crew can share one phone radio.
  */
 uint8_t ble_tracker_get_workout_profile(void);
 

@@ -8,6 +8,10 @@ static files under `web/ble_plotter/` are deployed; firmware source stays in
 
 `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16`
 
+RowPod 1.3.0 (portrait catch/finish + crew sync):
+
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/rowpod.html`
+
 Chrome or Edge. Hard-refresh if scripts look stale.
 
 > The site URL is still **public** (anyone with the link can open the UI).
@@ -46,4 +50,4 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=16`.
+Open `http://localhost:8080/?v=16`. RowPod: `http://localhost:8080/rowpod.html?v=1.3.0`.

@@ -49,6 +49,7 @@ extern "C" {
 #define SENSOR_PROTO_CFG_STATUS_V16_LEN  56
 #define SENSOR_PROTO_CFG_SYNC_REQ_LEN  8
 #define SENSOR_PROTO_CFG_SYNC_RSP_LEN  20
+/** Sync response: uint64 client_ms, uint64 device_us, uint32 sample_index. */
 /** batt.flags bit0: reading valid */
 #define SENSOR_PROTO_BATT_FLAG_VALID  0x01
 /** Wire format version on legacy v1 characteristics. */
@@ -72,6 +73,7 @@ extern "C" {
 /** Host-selected workout processing profile. */
 #define SENSOR_PROTO_PROFILE_GENERAL 0
 #define SENSOR_PROTO_PROFILE_HYROX   1
+#define SENSOR_PROTO_PROFILE_ROWING  2
 /** Session command values written by the host. */
 #define SENSOR_PROTO_SESSION_PREPARE  1
 #define SENSOR_PROTO_SESSION_START    2

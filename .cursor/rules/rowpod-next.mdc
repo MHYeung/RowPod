@@ -1,0 +1,16 @@
+---
+description: RowPod next-dev brief. Read before changing rowing host or firmware.
+globs: web/ble_plotter/**/row*.js,web/ble_plotter/rowpod.*,docs/ROWPOD*.md,components/sensor_protocol/**,components/ble_tracker/**
+alwaysApply: false
+---
+
+# RowPod next development
+
+Before changing RowPod matching, angle, CSV, boat class, or rowing-profile firmware:
+
+1. Read `docs/ROWPOD_NEXT.md` (ingested agent prompt + human gate).
+2. Read `docs/ROWPOD_ECOSYSTEM.md` and `docs/ROWING_SYNC.md`.
+3. Default next host slice is **1.4 Honest Crew Clock**. Do not start it until the human confirms stroke-side / bow-side overlay on water, or explicitly names the slice.
+4. Host owns oar angle. Do not flash firmware unless a test shows the host cannot proceed. Live rowing stays 56 Hz. No mag yaw. No watts.
+5. Firmware **major / v2** is an owner decision, not an automatic follow-on to 1.3.0.
+6. While implementing a slice, report: slice, files, coach-visible behaviour, tests, refusals, open questions.

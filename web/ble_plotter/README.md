@@ -21,10 +21,15 @@ python -m http.server 8080
 
 Open **http://localhost:8080/?v=16.8** (not `file://`). Hard-refresh if UI looks stale.
 
+Rowing catch/finish view (portrait PWA): **http://localhost:8080/rowpod.html?v=1.3.0**
+
+Coach/athlete ecosystem map: [`docs/ROWPOD_ECOSYSTEM.md`](../../docs/ROWPOD_ECOSYSTEM.md).
+
 Protocol unit tests (no browser):
 
 ```sh
 node web/ble_plotter/protocol.test.js
+node web/ble_plotter/rowing_angle.test.js
 ```
 
 ## Steps
@@ -64,7 +69,7 @@ node web/ble_plotter/protocol.test.js
 - Write/Notify `…2003`: software sync request/response
 - Read `…2004`: battery `u16 mV LE + u8 percent + u8 flags` (bit0 = valid)
 - Read/Write `…2005`: sensor-native rate Hz (`56`, `112`, `224`, or `448`; 448 is wire `255`)
-- Read/Write `…2006`: workout profile (`0` general, `1` HYROX)
+- Read/Write `…2006`: workout profile (`0` general, `1` HYROX, `2` rowing)
 - Write `…2007`: legacy 8-byte session command
 - Read/Notify `…2008`: legacy 36-byte session status
 - Read `…2009`: capabilities (formats, rates, MTU, queue depth)
@@ -95,4 +100,6 @@ the log with an external current trace when assessing energy use.
 - One browser gesture per newly permitted pod.
 - Practical target: 2–4 pods at 112 Hz notify.
 - Software sync compensates estimated clock offset/RTT; it is not sample-level IMU sync.
+  RowPod stamps samples from a fitted `sample_index → host ms` model instead of
+  notify arrival (see `docs/ROWING_SYNC.md`).
 - ATT MTU must be ≥25 to carry a single 22-byte v16 frame; preflight warns otherwise.

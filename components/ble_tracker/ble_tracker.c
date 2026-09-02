@@ -748,7 +748,7 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             }
             uint8_t profile = 0;
             if (ble_hs_mbuf_to_flat(ctxt->om, &profile, 1, NULL) != 0 ||
-                profile > SENSOR_PROTO_PROFILE_HYROX) {
+                profile > SENSOR_PROTO_PROFILE_ROWING) {
                 return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
             }
             if (session_capture_active()) {
@@ -844,16 +844,15 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             uint64_t client_ms = 0;
             memcpy(&client_ms, req, sizeof(client_ms));
             uint64_t device_us = (uint64_t)esp_timer_get_time();
-            uint16_t seq = (uint16_t)(sensor_stream_sample_index() & 0xffffu);
+            uint32_t sample_index = sensor_stream_sample_index();
             sensor_proto_sample_t sample = {0};
             if (sensor_stream_get_latest(&sample) == ESP_OK) {
-                seq = (uint16_t)(sample.sample_index & 0xffffu);
+                sample_index = sample.sample_index;
             }
             memset(s_sync_rsp, 0, sizeof(s_sync_rsp));
             memcpy(&s_sync_rsp[0], &client_ms, sizeof(client_ms));
             memcpy(&s_sync_rsp[8], &device_us, sizeof(device_us));
-            s_sync_rsp[16] = (uint8_t)(seq & 0xff);
-            s_sync_rsp[17] = (uint8_t)(seq >> 8);
+            memcpy(&s_sync_rsp[16], &sample_index, sizeof(sample_index));
             s_sync_rsp_valid = true;
 
             struct os_mbuf *om =

@@ -38,6 +38,11 @@ python -m http.server 8080
 
 Open `http://localhost:8080/?v=16`, click **Add pod**, select a tracker.
 
+Rowing catch/finish PWA: `http://localhost:8080/rowpod.html?v=1.3.0` (see
+[`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and the coach/athlete map
+[`docs/ROWPOD_ECOSYSTEM.md`](docs/ROWPOD_ECOSYSTEM.md)). Next development
+slices: [`docs/ROWPOD_NEXT.md`](docs/ROWPOD_NEXT.md).
+
 ## Pod identity and host selection
 
 - Every firmware pod is permanently a single-node BLE peripheral.

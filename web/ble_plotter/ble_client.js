@@ -34,6 +34,7 @@ import {
   gyroDpsFromQuat,
   rateToWire,
 } from "./protocol.js";
+import { extendSampleIndex } from "./timebase.js";
 
 export class BleClient {
   constructor() {
@@ -89,6 +90,7 @@ export class BleClient {
     this._peerHold = false;
     this._nextCommandId = 1;
     this._lastQuat = null;
+    this._lastSampleIndex = 0;
   }
 
   get deviceId() {
@@ -302,9 +304,14 @@ export class BleClient {
       }
 
       const attMtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
-      /* 24-byte fused needs ATT MTU ≥ 27; 22-byte v16 needs ≥ 25. */
+      /* RowPod prefers v16 raw gyro. Fused Mahony yaw follows the magnetometer
+       * and will walk the oar fan even after a relative-Zero. */
+      this.preferRawGyro = Boolean(options.preferRawGyro);
       this.usesFusedMotion = Boolean(
-        this.dataFusedChar && this.caps?.supportsFused && attMtu >= 27
+        !this.preferRawGyro &&
+          this.dataFusedChar &&
+          this.caps?.supportsFused &&
+          attMtu >= 27
       );
       this.usesV16Motion = Boolean(
         !this.usesFusedMotion &&
@@ -409,10 +416,10 @@ export class BleClient {
     });
   }
 
-  /** @param {0|1} profile */
+  /** @param {0|1|2} profile */
   async setWorkoutProfile(profile) {
     return this._queueGatt(async () => {
-      if (![0, 1].includes(profile)) {
+      if (![0, 1, 2].includes(profile)) {
         throw new Error(`unsupported workout profile ${profile}`);
       }
       if (this.profileChar) {
@@ -555,7 +562,15 @@ export class BleClient {
       const deviceMs = rsp.deviceUs / 1000;
       const clientMid = t0 + rttMs / 2;
       const offsetMs = deviceMs - clientMid;
-      return { offsetMs, rttMs, seq: rsp.seq, deviceMs, clientMid };
+      const sampleIndex = extendSampleIndex(rsp.seq, this._lastSampleIndex);
+      return {
+        offsetMs,
+        rttMs,
+        seq: rsp.seq,
+        sampleIndex,
+        deviceMs,
+        clientMid,
+      };
     });
   }
 
@@ -707,6 +722,7 @@ export class BleClient {
         sampleIndex: tracked.logical,
         missing: tracked.missing,
       };
+      this._lastSampleIndex = tracked.logical >>> 0;
       if (this.onFrame) this.onFrame(enriched, this.gaps, this.missingFrames);
     }
   }

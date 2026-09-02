@@ -23,6 +23,7 @@ export const FLAG_MULTI = 0x0001;
 export const BATT_FLAG_VALID = 0x01;
 export const PROFILE_GENERAL = 0;
 export const PROFILE_HYROX = 1;
+export const PROFILE_ROWING = 2;
 export const SESSION_PREPARE = 1;
 export const SESSION_START = 2;
 export const SESSION_STOP = 3;
@@ -454,8 +455,9 @@ export function decodeSyncRsp(view) {
   }
   const clientMs = Number(view.getBigUint64(0, true));
   const deviceUs = Number(view.getBigUint64(8, true));
-  const seq = view.getUint16(16, true);
-  return { clientMs, deviceUs, seq };
+  /* Bytes 16-19: uint32 sample_index. Old firmware wrote uint16 seq + pad 0. */
+  const seq = view.getUint32(16, true);
+  return { clientMs, deviceUs, seq, seq16: seq & 0xffff };
 }
 
 /** @param {DataView} view */

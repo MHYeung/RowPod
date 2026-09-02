@@ -1,8 +1,11 @@
 import { BleClient } from "./ble_client.js";
 import { MotionOutlierFilter } from "./outlier_filter.js";
 import { POD_COLORS, capturePreflight } from "./protocol.js";
+import { PodTimeBase } from "./timebase.js";
 
 const STORE_KEY = "c3_pod_labels_v1";
+const SEAT_STORE_KEY = "c3_pod_seats_v1";
+const RESYNC_PERIOD_MS = 4000;
 
 function loadLabels() {
   try {
@@ -16,11 +19,25 @@ function saveLabels(map) {
   localStorage.setItem(STORE_KEY, JSON.stringify(map));
 }
 
+function loadSeats() {
+  try {
+    return JSON.parse(localStorage.getItem(SEAT_STORE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveSeats(map) {
+  localStorage.setItem(SEAT_STORE_KEY, JSON.stringify(map));
+}
+
 export class PodRegistry {
   constructor() {
     this.sessions = new Map();
     this.labels = loadLabels();
+    this.seats = loadSeats();
     this.selectedId = null;
+    this._resyncTimer = null;
     this.onChange = null;
     /** Lightweight rate/battery/gap updates — must not rebuild rename inputs. */
     this.onStats = null;
@@ -81,9 +98,9 @@ export class PodRegistry {
     this._emitStats();
   }
 
-  async addPod() {
+  async addPod(options = {}) {
     if (this._addPromise) return this._addPromise;
-    this._addPromise = this._addPod();
+    this._addPromise = this._addPod(options);
     try {
       return await this._addPromise;
     } finally {
@@ -91,11 +108,12 @@ export class PodRegistry {
     }
   }
 
-  async _addPod() {
+  async _addPod(options = {}) {
     const client = new BleClient();
     let heldSessions = [];
     try {
       await client.connect({
+        preferRawGyro: options.preferRawGyro,
         beforeGattConnect: async () => {
           /* Soft-hold only: keep CCCD so existing pods keep sampling. Hard
            * pause (stopNotifications) stopped the firmware stream and created
@@ -126,6 +144,7 @@ export class PodRegistry {
     const color = POD_COLORS[this._colorIdx++ % POD_COLORS.length];
     const stored = this.labels[id]?.position;
     const position = stored || client.advName || `Pod-${client.info.podId.toString(16)}`;
+    const storedSeat = this.seats[id] || {};
     const session = {
       id,
       client,
@@ -140,6 +159,13 @@ export class PodRegistry {
       totalFrames: 0,
       windowStart: performance.now(),
       sync: { offsetMs: 0, rttMs: 0, ok: false },
+      timebase: new PodTimeBase({ nominalHz: client.meta.rate_hz || 56 }),
+      seat: storedSeat.seat || "",
+      hand:
+        storedSeat.hand === "bow" || storedSeat.hand === "stroke"
+          ? storedSeat.hand
+          : "",
+      side: storedSeat.side === "port" ? "port" : "starboard",
       battery: { ...client.battery },
       batteryReadError: "",
       mode: client.info.mode,
@@ -197,7 +223,9 @@ export class PodRegistry {
         session.windowStart = now;
         this._emitStats();
       }
-      const syncedMs = now + (session.sync.offsetMs || 0);
+      const idx = frame.sampleIndex ?? frame.seq;
+      const fromClock = session.timebase.hostMsFromSample(idx);
+      const syncedMs = fromClock != null ? fromClock : now;
       if (this.onFrame) this.onFrame(session, frame, syncedMs, quality);
     };
     client.onDisconnect = () => {
@@ -223,11 +251,13 @@ export class PodRegistry {
 
     try {
       session.sync = { ...(await client.syncClock()), ok: true };
+      this._ingestSync(session, session.sync);
     } catch (e) {
       console.warn("sync failed", e);
       session.sync = { offsetMs: 0, rttMs: 0, ok: false };
     }
 
+    this._ensureResyncLoop();
     this._emit();
     return session;
   }
@@ -255,11 +285,76 @@ export class PodRegistry {
     if (!session) return;
     try {
       session.sync = { ...(await session.client.syncClock()), ok: true };
+      this._ingestSync(session, session.sync);
     } catch (e) {
       session.sync = { offsetMs: 0, rttMs: 0, ok: false };
       throw e;
     }
     this._emit();
+  }
+
+  /**
+   * @param {string} id
+   * @param {{seat?:string,hand?:string,side?:string}} assignment
+   */
+  assignSeat(id, assignment) {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    if (assignment.seat != null) session.seat = String(assignment.seat).slice(0, 16);
+    if (assignment.hand === "bow" || assignment.hand === "stroke") {
+      session.hand = assignment.hand;
+    }
+    if (assignment.side === "port" || assignment.side === "starboard") {
+      session.side = assignment.side;
+    }
+    this.seats[id] = {
+      seat: session.seat,
+      hand: session.hand,
+      side: session.side,
+    };
+    saveSeats(this.seats);
+    this._emit();
+  }
+
+  _ingestSync(session, sync) {
+    if (!session?.timebase || !sync) return;
+    const hz = session.client?.meta?.rate_hz;
+    if (hz) session.timebase.setNominalHz(hz);
+    const sampleIndex = sync.sampleIndex ?? sync.seq;
+    if (sync.clientMid == null || sampleIndex == null) return;
+    session.timebase.observe({
+      sampleIndex,
+      hostMs: sync.clientMid,
+      rttMs: sync.rttMs,
+    });
+  }
+
+  _ensureResyncLoop() {
+    if (this._resyncTimer) return;
+    this._resyncTimer = setInterval(() => {
+      this.resyncAllQuiet().catch(() => {});
+    }, RESYNC_PERIOD_MS);
+  }
+
+  _stopResyncLoopIfEmpty() {
+    if (this.sessions.size > 0) return;
+    if (this._resyncTimer) {
+      clearInterval(this._resyncTimer);
+      this._resyncTimer = null;
+    }
+  }
+
+  async resyncAllQuiet() {
+    for (const session of this.sessions.values()) {
+      if (session.status !== "connected") continue;
+      try {
+        session.sync = { ...(await session.client.syncClock()), ok: true };
+        this._ingestSync(session, session.sync);
+      } catch (_) {
+        /* Keep the last good fit; a missed ping is not fatal. */
+      }
+    }
+    this._emitStats();
   }
 
   async refreshBattery(id) {
@@ -296,6 +391,7 @@ export class PodRegistry {
       if (s.status !== "connected") continue;
       try {
         await s.client.setRate(hz);
+        if (s.timebase) s.timebase.setNominalHz(hz);
       } catch (e) {
         console.warn("setRate failed", s.position, e);
       }
@@ -303,7 +399,7 @@ export class PodRegistry {
     this._emitStats();
   }
 
-  /** @param {0|1} profile */
+  /** @param {0|1|2} profile */
   async setWorkoutProfileAll(profile) {
     for (const s of this.sessions.values()) {
       if (s.status !== "connected") continue;
@@ -443,6 +539,7 @@ export class PodRegistry {
     if (this.selectedId === id) {
       this.selectedId = this.sessions.keys().next().value || null;
     }
+    this._stopResyncLoopIfEmpty();
     this._emit();
   }
 

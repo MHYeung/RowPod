@@ -1,0 +1,19 @@
+{
+  "name": "RowPod 1.3.0",
+  "short_name": "RowPod",
+  "description": "Oar catch/finish angle, blade feather, and crew sync from C3-Tracker pods.",
+  "start_url": "./rowpod.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#e0e4d5",
+  "theme_color": "#392d37",
+  "icons": [
+    {
+      "src": "overtec-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

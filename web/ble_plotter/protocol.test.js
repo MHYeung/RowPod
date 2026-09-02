@@ -21,6 +21,7 @@ import {
   decodeFramesV16,
   decodeSessionStatus,
   decodeSessionStatusV16,
+  decodeSyncRsp,
   encodeSessionCommand,
   encodeSessionCommandV16,
   rateFromWire,
@@ -283,6 +284,22 @@ const meta = {
   assert(fusedCap.ok, "fused 448 Hz preflight ok at MTU 247");
   assertEq(fusedCap.frameLen, 24, "fused preflight frame length");
   assertEq(fusedCap.batch, 4, "fused capture batches 4 frames");
+}
+
+/* --- sync rsp 32-bit sample index (pad bytes 18-19) --- */
+{
+  const buf = new Uint8Array(20);
+  const view = new DataView(buf.buffer);
+  view.setBigUint64(0, 1000n, true);
+  view.setBigUint64(8, 2_000_000n, true);
+  view.setUint32(16, 70000, true);
+  const rsp = decodeSyncRsp(view);
+  assertEq(rsp.seq, 70000, "sync seq is 32-bit sample index");
+  assertEq(rsp.deviceUs, 2_000_000, "sync device_us");
+  const legacy = new Uint8Array(20);
+  const lv = new DataView(legacy.buffer);
+  lv.setUint16(16, 0x1234, true);
+  assertEq(decodeSyncRsp(lv).seq, 0x1234, "legacy 16-bit seq still decodes");
 }
 
 console.log(`protocol tests: ${passed} passed, ${failed} failed`);
