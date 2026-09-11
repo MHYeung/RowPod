@@ -16,7 +16,7 @@ Pair this with an external current logger when assessing energy use.
 ## Equipment
 
 - One to four flashed v16 pods.
-- Chrome or Edge on HTTPS / localhost dashboard `/?v=16`.
+- Chrome or Edge on HTTPS / localhost dashboard `/?v=16.8`.
 - Optional: BLE sniffer or phone that forces a small ATT MTU.
 
 ## Cases
@@ -31,7 +31,7 @@ Pair this with an external current logger when assessing energy use.
 
 ## Procedure
 
-1. Flash firmware and hard-refresh the dashboard (`/?v=16`).
+1. Flash firmware and hard-refresh the dashboard (`/?v=16.8`).
 2. Add the required pods. Confirm Summary → Capture integrity shows
    `proto v2`, applied rate, MTU, and queue counters.
 3. Start a status log on the Battery test tab (60 s interval).
@@ -49,7 +49,7 @@ Pair this with an external current logger when assessing energy use.
 
 ## Record
 
-- Firmware hash / build, dashboard `?v=16`, browser, OS.
+- Firmware hash / build, dashboard `?v=16.8`, browser, OS.
 - Per case: MTU, observed Hz, gaps, missing frames, sensor/transport drops,
   notify failures, queue high-water, drain wait duration.
 - Whether FINALIZE succeeded only after `drain_done`.
