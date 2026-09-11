@@ -6,7 +6,7 @@ Chrome/Edge page for single-pod logging and multi-pod overlay monitoring.
 
 GitHub Pages on the private Pro repo (static `web/ble_plotter/` only):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16.8`
 
 Setup: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
 
@@ -58,8 +58,10 @@ node web/ble_plotter/rowing_angle.test.js
 - Service `9b7e1000-2b2f-4f71-9b86-4bb2e6d54f00`
 - Notify `…1001`: one or more packed 20-byte LE frames (`seq + 9×int16`) — v1
 - Notify `…1003`: one or more packed 22-byte LE frames (`sample_index + 9×int16`) — v16
+- Notify `…1004`: packed 24-byte fused frames (Q15 quat + accel + mag; **no gyro**)
 - Read `…1002`: scale metadata (`flags` bit0 = multi mode)
-- Dashboard v16 prefers `…1003` when capabilities advertise it
+- Lab dashboard prefers fused when capabilities advertise it and ATT MTU ≥ 27
+- RowPod sets `preferRawGyro` and stays on `…1003` (see [`docs/MAHONY_AHRS.md`](../../docs/MAHONY_AHRS.md))
 
 ### Configuration / sync
 
@@ -82,8 +84,9 @@ node web/ble_plotter/rowing_angle.test.js
 - Connected live monitor: **56 Hz**
 - Logging: **448 Hz** (one pod) or **112 Hz** (2+ pods); CSV v7 records
   Mahony quaternions, body accel/mag, stationary phases, and drop counters
-- Capture lifecycle: `PREPARE → CONFIGURE → BIAS_START → MOTION →
-  STOP_REQUESTED → DRAIN → FINALIZE`; `FINALIZE` requires `drain_done`
+- Capture lifecycle (GATT): `PREPARE → START → STOP → DRAIN → FINALIZE`;
+  `FINALIZE` requires `drain_done`. Browser CSV phases `bias_start` / `motion` /
+  `bias_end` are host-only labels, not extra commands.
 - No motion CCCD → sampling off (no IMU broadcast)
 
 The Summary tab provides fleet cards with battery/sensor health, short live
@@ -102,4 +105,6 @@ the log with an external current trace when assessing energy use.
 - Software sync compensates estimated clock offset/RTT; it is not sample-level IMU sync.
   RowPod stamps samples from a fitted `sample_index → host ms` model instead of
   notify arrival (see `docs/ROWING_SYNC.md`).
-- ATT MTU must be ≥25 to carry a single 22-byte v16 frame; preflight warns otherwise.
+- ATT MTU must be ≥25 to carry a single 22-byte v16 frame, ≥27 for 24-byte
+  fused; preflight warns otherwise. The pod initiates Exchange MTU because
+  Windows/Chrome often do not.

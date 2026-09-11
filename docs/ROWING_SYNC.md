@@ -61,6 +61,9 @@ Mahony's magnetometer yaw. A stroke-midpoint lock then holds the first complete
 stroke's center (set by Zero + the first catch/finish pair) so residual gyro
 bias cannot walk the fan off the diagram.
 
+Firmware filter knobs and why fused yaw is the wrong oar signal:
+[`MAHONY_AHRS.md`](MAHONY_AHRS.md).
+
 If the card says **mag yaw**, the browser fell back to fused quaternions —
 treat catch degrees as low confidence and re-Zero often. **gyro lock** after
 a few strokes is the high-confidence state: raw gyro, Zeroed, midpoint walk
