@@ -2,7 +2,9 @@
 
 This setup targets relative 3D shape over a 1–3 second arm stroke. It does not
 turn a single IMU into an absolute room-position sensor. Magnetometer data
-constrains heading; it does not observe translation.
+constrains heading; it does not observe translation. On-device Mahony (Q15
+fused frames, Ki = 0, mag stride) is documented in
+[`MAHONY_AHRS.md`](MAHONY_AHRS.md).
 
 ## Before collecting data
 

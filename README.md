@@ -24,7 +24,7 @@ idf.py -p COMx flash monitor
 **Hosted (recommended, GitHub Pro):** after the one-time Pages setup in
 [`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md), open:
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16.8`
 
 Actions deploys only `web/ble_plotter/` as the Pages site; firmware stays on
 `main`. The site URL is still publicly reachable.
@@ -36,7 +36,8 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=16`, click **Add pod**, select a tracker.
+Open `http://localhost:8080/?v=16.8`, click **Add pod**, select a tracker.
+Hard-refresh if scripts look stale; `index.html` cache-busts assets as `?v=16.8`.
 
 Rowing catch/finish PWA: `http://localhost:8080/rowpod.html?v=1.3.0` (see
 [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and the coach/athlete map
@@ -92,6 +93,9 @@ The single-tap action controls BLE streaming; CSV capture remains in the
 browser dashboard and is not stored in pod flash.
 The session/status lifecycle and CSV provenance fields are documented in
 [docs/SESSION_PROTOCOL.md](docs/SESSION_PROTOCOL.md).
+On-device Mahony (fused `…1004`, Q15, mag stride) is documented in
+[docs/MAHONY_AHRS.md](docs/MAHONY_AHRS.md). The lab dashboard prefers fused
+when ATT MTU ≥ 27; RowPod stays on v16 raw gyro.
 
 For calibrated, quality-gated short arm-stroke capture and reconstruction, see
 [docs/TRAJECTORY_CAPTURE.md](docs/TRAJECTORY_CAPTURE.md).

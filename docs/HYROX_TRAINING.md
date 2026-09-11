@@ -51,6 +51,7 @@ Use the results to tune station thresholds and refractory times in
 or competitively validated.
 
 The firmware exposes a host-selected workout profile characteristic. Selecting
-HYROX requests the high-rate capture policy; the browser remains responsible
-for station state and rep estimation because it has the session context and
-can show uncertainty to the athlete.
+HYROX writes `…2006 = 1`, which requests the 448 Hz capture policy; the
+browser remains responsible for station state and rep estimation because it
+has the session context and can show uncertainty to the athlete. Profile
+writes are rejected while a capture is active.
