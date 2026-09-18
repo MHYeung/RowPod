@@ -17,6 +17,18 @@ IMU lab (plots, orientation, HYROX, session CSV, battery):
 Old `rowpod.html` bookmarks redirect to `index.html`. Chrome or Edge.
 Hard-refresh if scripts look stale.
 
+## Two host caches (do not mix)
+
+1.4.4 split the Pages root. The hosts do **not** share a cache-bust token.
+
+| Host | URL | Cache | On bump |
+|------|-----|-------|---------|
+| RowPod | `/?v=1.4.4` | Query string **and** service worker `rowpod-1.4.4` (`sw.js`) | Bump `version.js`, `?v=`, and the SW cache name together. Installed PWAs must be deleted and re-added. |
+| IMU lab | `/lab.html?v=16.8` | Query string on `styles.css` / `app.js` only. No service worker. | Hard-refresh. `app.js` throws if the HTML is older than `lab.html?v=16.8`. |
+
+Opening `/?v=16.8` after 1.4.4 loads **RowPod**, not the lab. Use `lab.html`
+for plots / HYROX / mag-cal / battery logs.
+
 > The site URL is still **public** (anyone with the link can open the UI).
 > Pro does not hide the hosted page; it only lets you publish from a private repo.
 > BLE still needs a nearby pod and a browser gesture.
@@ -43,6 +55,8 @@ created it earlier, and remove the old `DASHBOARD_DEPLOY_TOKEN` secret.
 |-------|-----|
 | Workflow blocked / Pages permission | Settings → Pages → Source must be **GitHub Actions** |
 | 404 after green deploy | Wait 1–2 min; open the URL with `/?v=1.4.4` |
+| Stale RowPod JS after a green deploy | Hard-refresh. Cache name must still be `rowpod-1.4.4` |
+| Stale IMU lab after a green deploy | Open `/lab.html?v=16.8` and hard-refresh (Ctrl+Shift+R) |
 | Environment approval wait | Settings → Environments → `github-pages` → remove required reviewers if you added any |
 | Web Bluetooth fails | Must use the `https://…github.io/…` URL (or localhost), not `file://` |
 | Phone still shows HYROX / plots at `/` | Hard-refresh; delete the old PWA and re-add. Cache name must be `rowpod-1.4.4` |
