@@ -93,6 +93,8 @@ browser dashboard and is not stored in pod flash.
 The session/status lifecycle and CSV provenance fields are documented in
 [docs/SESSION_PROTOCOL.md](docs/SESSION_PROTOCOL.md).
 
+On-device Mahony (fused BLE, Ki=0, mag stride):
+[docs/MAHONY_AHRS.md](docs/MAHONY_AHRS.md).
 For calibrated, quality-gated short arm-stroke capture and reconstruction, see
 [docs/TRAJECTORY_CAPTURE.md](docs/TRAJECTORY_CAPTURE.md).
 For station-aware training metrics, see

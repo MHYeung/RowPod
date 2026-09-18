@@ -74,7 +74,8 @@ bias cannot walk the fan off the diagram.
 If the card says **mag yaw**, the browser fell back to fused quaternions —
 treat catch degrees as low confidence and re-Zero often. **gyro lock** after
 a few strokes is the high-confidence state: raw gyro, Zeroed, midpoint walk
-under 8°.
+under 8°. Filter knobs and why fused omits gyro:
+[`MAHONY_AHRS.md`](MAHONY_AHRS.md).
 
 Clock ±rms is a separate confidence for *timing*, not angle.
 
@@ -201,6 +202,7 @@ the stroke is not rated (single seat, missing finish, or untrusted clock).
 | `web/ble_plotter/rowing_crew.js` | matching, in-sync %, CSV |
 | `web/ble_plotter/rowing_length.js` | drive arc and blade metres from outboard |
 | `web/ble_plotter/version.js` | `ROWPOD_VERSION` |
+| `docs/MAHONY_AHRS.md` | Why RowPod must not subscribe fused |
 | `components/sensor_protocol` | `PROFILE_ROWING = 2` |
 
 ```sh

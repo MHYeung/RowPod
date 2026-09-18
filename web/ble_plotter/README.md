@@ -49,6 +49,8 @@ Bring-up, overlay plots, orientation cube, HYROX, Mahony CSV, battery log:
 **http://localhost:8080/lab.html?v=16.8**
 
 That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
+Lab assets are cache-busted as `?v=16.8`; RowPod uses `?v=1.4.4` plus the
+`rowpod-1.4.4` service worker. Opening `/?v=16.8` after 1.4.4 is still RowPod.
 
 ## Protocol
 
@@ -57,8 +59,10 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 - Service `9b7e1000-2b2f-4f71-9b86-4bb2e6d54f00`
 - Notify `…1001`: one or more packed 20-byte LE frames (`seq + 9×int16`) — v1
 - Notify `…1003`: one or more packed 22-byte LE frames (`sample_index + 9×int16`) — v16
+- Notify `…1004`: packed 24-byte fused frames (Q15 quat + accel + mag; **no gyro**)
 - Read `…1002`: scale metadata (`flags` bit0 = multi mode)
-- RowPod and the IMU lab prefer `…1003` when capabilities advertise it
+- IMU lab prefers fused when caps advertise it and ATT MTU ≥ 27
+- RowPod sets `preferRawGyro` and stays on `…1003` (see [`docs/MAHONY_AHRS.md`](../../docs/MAHONY_AHRS.md))
 
 ### Configuration / sync
 
@@ -88,4 +92,6 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 
 - One browser gesture per newly permitted pod.
 - Practical target: 2–4 pods at 56 Hz live.
-- ATT MTU must be ≥25 to carry a single 22-byte v16 frame.
+- ATT MTU must be ≥25 to carry a single 22-byte v16 frame, ≥27 for 24-byte
+  fused; preflight warns otherwise. The pod initiates Exchange MTU because
+  Windows/Chrome often do not.
