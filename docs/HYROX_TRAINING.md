@@ -14,7 +14,8 @@ not as a replacement for a track timer or official timing chip.
 
 The dashboard labels repetitions as candidates because a single IMU cannot
 reliably distinguish every partial rep, pause, or technical fault without
-station-specific validation.
+station-specific validation. The HYROX tab lives on the IMU lab
+(`web/ble_plotter/lab.html`), not on RowPod.
 
 ## Recommended pod placement
 

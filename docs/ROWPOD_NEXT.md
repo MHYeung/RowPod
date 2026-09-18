@@ -1,16 +1,20 @@
 # RowPod — next development (ingested brief)
 
 **Ingested:** 1 September 2026 from `AGENT_PROMPT_ROWPOD_NEXT.md`.  
-**Current ship:** host **1.3.0**. Do not start Slice A until the human says the
-stroke-side / bow-side (port/starboard) overlay is confirmed on water.
+**Current ship:** host **1.4.4** (RowPod is the Pages root; IMU lab at `lab.html`).
+Angle, arc, blade metres, and gated feather-on are unchanged from 1.4.3.
+1.4.4 is not the full 1.5 shaft-axis / wash slice. Do not flash firmware for
+this minor. Next named slice is **1.5** only when the human names the rest of
+blade-work.
 
-## Human gate (this repo, this week)
+## Human gate (this repo)
 
 | Gate | Status |
 |------|--------|
-| 1.3.0 boat class + **Stroke sits** + per-seat **hand** | Shipped. Waiting on a 2x / 2− / opposite-gunwale CSV that overlays instead of mirroring. |
-| Host **1.4 Honest Crew Clock** | Next *software* slice after that confirm. Default first slice in the brief below. |
-| Firmware **major / v2** | **Owner decision only.** The brief below does **not** start a firmware major. It forbids flashing unless the host is blocked, and lists native app / protocol break / new mount as v2. When port/starboard is confirmed, the owner may still choose a firmware major — that is a separate call from 1.4–1.6. |
+| 1.3.0 boat class + **Stroke sits** + per-seat **hand** | Shipped. Overlay confirmed on water (2 September 2026 2x CSVs: both catches negative / finishes positive). |
+| Host **1.4 Honest Crew Clock** | Shipped in `version.js` 1.4.0. Water CSV still needed to confirm the matcher (no 500 ms alias, empty `in_sync` when a finish is missing). |
+| Host **1.5 Feather + blade flags** | Next *software* slice. Do not start until the human says so. |
+| Firmware **major / v2** | **Owner decision only.** This 1.4 host slice does **not** start a firmware major. |
 
 **Product bet (do not dilute):** a crew that is 40 ms apart at the catch is
 leaking speed no force curve will save. Make that 40 ms number true on 2–4
@@ -61,7 +65,7 @@ Hardware / schematic context (do not redesign):
 
 Live hosted UI (reference only; implement in the repo):
 
-- `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/rowpod.html`
+- `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
 
 ---
 
@@ -94,7 +98,7 @@ Oar shaft → C3-Tracker pod → BLE (PROFILE_ROWING = 2, 56 Hz live)
 |-------|-------------------|
 | Firmware (ESP-IDF `components/`) | Only if the host is blocked (radio, sample clock, v16 frames, 32-bit sync seq, battery, sleep). Flash every pod. |
 | RowPod host (`web/ble_plotter/rowpod*`, `rowing_*.js`) | Default workplace. Angle, events, crew match, fan, CSV, boat class. Refresh the page. |
-| Lab host (`index.html`, `app.js`) | Debug / high-rate capture for later labelling. Not the towpath UI. |
+| Lab host (`lab.html`, `app.js`) | Debug / high-rate capture for later labelling. Not the towpath UI. |
 
 RowPod v1 is **host-owned angle**: the pod sends IMU + `sample_index`; the browser integrates, detects catch/finish, matches the crew. A water test in the afternoon must still be able to change the detector **without** a firmware campaign.
 
@@ -105,6 +109,7 @@ RowPod v1 is **host-owned angle**: the pod sends IMU + `sample_index`; the brows
 - 1.1.0 prefer v16 raw gyro; midpoint lock; confidence chip
 - 1.2.0 no finish-jump DC leak; catch/finish state machine; blade feather
 - 1.3.0 boat class; stroke-side / bow-side; overlay sign from Stroke sits
+- 1.4.4 Pages root is RowPod; IMU lab at `lab.html`
 
 Patches = small detector/UI fixes. Minors = behaviour a coach notices. PWA cache name and `?v=` follow the same number.
 

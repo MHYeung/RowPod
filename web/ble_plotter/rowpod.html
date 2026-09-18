@@ -2,104 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#392d37" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <title>RowPod 1.3.0</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="icon" href="overtec-mark.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="rowpod.css?v=1.3.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RowPod</title>
+  <link rel="canonical" href="./index.html" />
+  <script>
+    location.replace("./index.html" + (location.search || ""));
+  </script>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <h1>RowPod <span data-rowpod-version>1.3.0</span></h1>
-      <p class="sub">Catch / finish angle and crew sync</p>
-    </div>
-    <a class="lab-link" href="./index.html?v=17">Lab dashboard</a>
-  </header>
-
-  <section class="controls">
-    <button id="btnAddPod" type="button">Add pod</button>
-    <button id="btnDisconnect" type="button" disabled>Disconnect</button>
-    <button id="btnZero" type="button" disabled>Zero</button>
-    <button id="btnStart" type="button" disabled>Start piece</button>
-    <button id="btnStop" type="button" disabled>Stop</button>
-    <button id="btnCsv" type="button" disabled>Stroke CSV</button>
-  </section>
-
-  <section class="rig" aria-label="Boat class">
-    <label>
-      Boat
-      <select id="boatClass"></select>
-    </label>
-    <span id="boatKind" class="rig-kind">sweep</span>
-    <label>
-      Stroke sits
-      <select id="strokeSits">
-        <option value="starboard">Starboard</option>
-        <option value="port">Port</option>
-      </select>
-    </label>
-  </section>
-  <p id="status" class="status">Android Chrome or desktop Chrome/Edge. Add one pod per oar.</p>
-
-  <section class="headline" aria-live="polite">
-    <div class="sync-pct">
-      <strong id="syncPct">—</strong>
-      <span>in sync</span>
-    </div>
-    <div class="kpis">
-      <div>SPM <strong id="spm">—</strong></div>
-      <div>Catch spread <strong id="catchSpread">—</strong></div>
-      <div>Finish spread <strong id="finishSpread">—</strong></div>
-      <div>Strokes <strong id="strokeCount">0</strong></div>
-      <div>Feather <strong id="featherLive">—</strong></div>
-    </div>
-  </section>
-
-  <figure class="fan-wrap">
-    <figcaption>Catch toward the bow (left) · finish toward the stern — both sides overlaid</figcaption>
-    <canvas id="fan" width="720" height="520"></canvas>
-  </figure>
-
-  <section class="threshold">
-    <label>
-      In-sync window
-      <input id="thresholdMs" type="range" min="10" max="80" step="5" value="40" />
-      <span id="thresholdLabel">40 ms</span>
-    </label>
-  </section>
-
-  <section class="table-wrap">
-    <table>
-      <caption>Per seat vs crew (last stroke)</caption>
-      <thead>
-        <tr>
-          <th>Seat</th>
-          <th>Hand</th>
-          <th>Catch</th>
-          <th>Finish</th>
-          <th>Arc</th>
-          <th>Feather</th>
-          <th>Δ catch</th>
-          <th>Δ finish</th>
-          <th>Clock</th>
-        </tr>
-      </thead>
-      <tbody id="seatRows"></tbody>
-    </table>
-  </section>
-
-  <section id="podList" class="pod-assign" aria-label="Seat assignment"></section>
-
-  <p class="footnote">
-    Mount the pod on the oar shaft inboard of the gate. Pick boat class, then
-    seat and stroke-side vs bow-side. Hold squared and perpendicular, then tap
-    Zero. Stroke-side is which gunwale, not catch toward the bow. iPhone Safari
-    cannot use Web Bluetooth.
-  </p>
-
-  <script type="module" src="rowpod.js?v=1.3.0"></script>
+  <p><a href="./index.html">Open RowPod</a></p>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # RowPod — oar angle and crew sync
 
-Host UI version is **1.3.0** (`web/ble_plotter/version.js`). Major bumps (v2)
+Host UI version is **1.4.4** (`web/ble_plotter/version.js`). Major bumps (v2)
 are a human decision; this file tracks what the current host actually does.
 
 | Version | What changed |
@@ -10,15 +10,21 @@ are a human decision; this file tracks what the current host actually does.
 | 1.1.0 | Prefer v16 raw gyro · ĝ; stroke-midpoint lock; confidence chip. |
 | 1.2.0 | Smooth DC (no finish jump); catch/finish state machine; blade feather in UI + CSV. |
 | 1.3.0 | Boat class 2x–8+; per-seat stroke-side / bow-side; overlay sign from “Stroke sits”. |
+| 1.4.0 | Honest Crew Clock: forward match; in-sync only with two complete seats and a trusted clock. |
+| 1.4.1 | 180° fan (no bottom half); thick per-seat colour bars; larger catch/finish numbers. |
+| 1.4.2 | Catch late/early vs stroke on the live page; does not wait for a finish. |
+| 1.4.3 | Drive arc + blade metres from outboard; gated feather-on Δt vs stroke after finish. |
+| 1.4.4 | Pages root is RowPod (`index.html`); IMU lab parked at `lab.html`. |
 
 RowPod turns the C3-Tracker pod into an **oar-mounted catch/finish angle
 sensor**. Coaches and researchers get per-seat catch angle, finish angle, arc,
 blade feather, and the timing spread of the crew.
 
-The host UI is a portrait PWA: [`web/ble_plotter/rowpod.html`](../web/ble_plotter/rowpod.html).
+The host UI is a portrait PWA: [`web/ble_plotter/index.html`](../web/ble_plotter/index.html).
 Coach/athlete feature map and how we iterate: [`ROWPOD_ECOSYSTEM.md`](ROWPOD_ECOSYSTEM.md).
-The existing lab dashboard is unchanged. iPhone Safari has no Web Bluetooth;
-use **Android Chrome** or desktop **Chrome/Edge**.
+IMU lab (plots, HYROX, mag-cal CSV) lives at [`lab.html`](../web/ble_plotter/lab.html).
+iPhone Safari has no Web Bluetooth; use **Android Chrome** or desktop
+**Chrome/Edge**.
 
 ## What the number means
 
@@ -27,8 +33,12 @@ are the usual rowing convention: degrees off perpendicular in the horizontal
 plane (catch toward the bow, negative; finish toward the stern, positive).
 
 Typical sculling / sweep targets sit around catch **−55° to −65°** and finish
-**+30° to +40°**. Treat RowPod as a coaching aid, not a calibrated Peach or NK
-replacement, until you have finished the bench checks below.
+**+30° to +40°**. **Arc** is finish − catch (the end-to-end drive rotation).
+**Blade metres** are `outboard × arc_rad` about the pin — oar arc, not
+distance through the water. **Feather-on** is the first |feather| up-cross
+through 45° after finish; Δt vs stroke is blank if the blade never rolled or
+if feather tracks the fan. Treat RowPod as a coaching aid, not a calibrated
+Peach or NK replacement, until you have finished the bench checks below.
 
 ## Why not yaw from the magnetometer
 
@@ -154,28 +164,42 @@ of this test (`rowing_angle.test.js`) requires **< 15 ms** spread. On the bench,
 expect similar once both clocks show a fitted ±rms of a few milliseconds. Any
 large split here is **clock error**, not crew.
 
+Session checklist (PWA version, Zero, pass/fail table):
+[`ROWPOD_TOMORROW_CHECKLIST.md`](ROWPOD_TOMORROW_CHECKLIST.md).
+
 ### 3. Water
 
 Only after (1) and (2): mount on the looms, Zero at perpendicular, start a
 piece on a straight course, export **Stroke CSV**. Columns are long-format
 (one row per seat per stroke) for researchers:
 
-`stroke_index, seat, side, hand, pod_id, t_catch_ms, t_finish_ms, catch_deg,
-finish_deg, arc_deg, feather_catch_deg, feather_finish_deg,
-catch_dt_vs_ref_ms, finish_dt_vs_ref_ms,
-crew_catch_spread_ms, crew_finish_spread_ms, in_sync, spm, timebase_rms_ms`
+`stroke_index, seat, side, hand, pod_id, t_catch_ms, t_finish_ms, t_feather_ms,
+catch_deg, finish_deg, arc_deg, blade_arc_m, feather_catch_deg, feather_finish_deg,
+catch_dt_vs_ref_ms, finish_dt_vs_ref_ms, feather_dt_vs_ref_ms,
+crew_catch_spread_ms, crew_finish_spread_ms, in_sync, match_quality, spm,
+timebase_rms_ms, clock_status`
 
-The CSV header also stamps `# rowpod_version=1.3.0`, `# boat_class=`, and
-`# stroke_sits=`. `side` is port/starboard; `hand` is stroke-side or bow-side.
+The CSV header also stamps `# rowpod_version=1.4.4`, `# boat_class=`,
+`# stroke_sits=`, `# inboard_m=`, and `# outboard_m=`. `blade_arc_m` is
+outboard × arc (radians); empty when a finish is missing. `t_feather_ms` is
+the first |feather| up-cross through 45° after finish; empty when there is
+no roll, the clock is untrusted, or feather tracks the fan. `side` is
+port/starboard; `hand` is stroke-side or bow-side. `in_sync` is empty when
+the stroke is not rated (single seat, missing finish, or untrusted clock).
+`match_quality` and `clock_status` (`ok` or `UNTRUSTED_TIME`) explain why.
 
 ## Files
 
 | Path | Role |
 |------|------|
-| `docs/ROWPOD_NEXT.md` | Next host slices 1.4–1.6 (gated) |
+| `docs/ROWPOD_NEXT.md` | Next host slices 1.5–1.6 (1.4 Honest Crew Clock shipped) |
+| `web/ble_plotter/index.html` | RowPod PWA (site root) |
+| `web/ble_plotter/lab.html` | IMU lab (plots, HYROX, mag-cal) |
 | `web/ble_plotter/timebase.js` | `sample_index` → host ms |
 | `web/ble_plotter/boat_rig.js` | Boat class, stroke/bow hand, port/starboard |
+| `web/ble_plotter/rowing_fan.js` | 180° overlay geometry |
 | `web/ble_plotter/rowing_crew.js` | matching, in-sync %, CSV |
+| `web/ble_plotter/rowing_length.js` | drive arc and blade metres from outboard |
 | `web/ble_plotter/version.js` | `ROWPOD_VERSION` |
 | `components/sensor_protocol` | `PROFILE_ROWING = 2` |
 

@@ -70,7 +70,7 @@ try {
       !btnTestStart || !btnTestStop || !btnTestDownload || !btnTestClear ||
       !testLabelEl || !testIntervalEl || !testElapsedEl || !testRowsEl ||
       !testStateEl || !testLatestEl || !document.getElementById("captureIntegrity")) {
-    throw new Error("Dashboard HTML outdated — hard-refresh (Ctrl+Shift+R) and open /?v=16.8");
+    throw new Error("Lab HTML outdated — hard-refresh (Ctrl+Shift+R) and open lab.html?v=16.8");
   }
 
   const plotAccel = new MultiPlot(document.getElementById("plotAccel"), ["ax", "ay", "az"], {

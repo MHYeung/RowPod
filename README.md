@@ -19,15 +19,16 @@ idf.py build
 idf.py -p COMx flash monitor
 ```
 
-## Web plotter
+## Web dashboard
 
 **Hosted (recommended, GitHub Pro):** after the one-time Pages setup in
 [`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md), open:
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=16`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
 
-Actions deploys only `web/ble_plotter/` as the Pages site; firmware stays on
-`main`. The site URL is still publicly reachable.
+That URL is **RowPod**. IMU lab (plots, HYROX, mag-cal CSV) is
+`…/lab.html?v=16.8`. Actions deploys only `web/ble_plotter/` as the Pages
+site; firmware stays on `main`. The site URL is still publicly reachable.
 
 **Local fallback:**
 
@@ -36,12 +37,11 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=16`, click **Add pod**, select a tracker.
+Open `http://localhost:8080/?v=1.4.4`, click **Add pod**, select a tracker.
 
-Rowing catch/finish PWA: `http://localhost:8080/rowpod.html?v=1.3.0` (see
-[`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and the coach/athlete map
-[`docs/ROWPOD_ECOSYSTEM.md`](docs/ROWPOD_ECOSYSTEM.md)). Next development
-slices: [`docs/ROWPOD_NEXT.md`](docs/ROWPOD_NEXT.md).
+Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
+[`docs/ROWPOD_ECOSYSTEM.md`](docs/ROWPOD_ECOSYSTEM.md). Next slices:
+[`docs/ROWPOD_NEXT.md`](docs/ROWPOD_NEXT.md).
 
 ## Pod identity and host selection
 

@@ -16,6 +16,10 @@ const DC_ALPHA = 0.85;
 const DC_TAU_S = 0.45;
 const MIN_ARC_DEG = 20;
 const FINISH_TIMEOUT_MS = 2500;
+const FEATHER_ON_DEG = 45;
+const FEATHER_TRACK_R = 0.7;
+const FEATHER_TRACK_RANGE = 0.45;
+const FEATHER_TRUST_DRIVES = 2;
 
 export function gravityBodyFromQuat(q) {
   const w = q.qw;
@@ -74,6 +78,23 @@ function interpolateCrossing(t0, y0, t1, y1) {
   return t0 + u * (t1 - t0);
 }
 
+function interpolateLevel(t0, y0, t1, y1, level) {
+  const denom = y1 - y0;
+  const frac = Math.abs(denom) > 1e-12 ? (level - y0) / denom : 0;
+  const u = Math.max(0, Math.min(1, frac));
+  return t0 + u * (t1 - t0);
+}
+
+function pearson(n, sumX, sumY, sumXX, sumYY, sumXY) {
+  if (n < 8) return 0;
+  const num = n * sumXY - sumX * sumY;
+  const denX = n * sumXX - sumX * sumX;
+  const denY = n * sumYY - sumY * sumY;
+  const den = Math.sqrt(denX * denY);
+  if (!Number.isFinite(den) || den < 1e-9) return 0;
+  return num / den;
+}
+
 function hasRawGyro(frame) {
   return frame.protocol === 1 || frame.protocol === 2;
 }
@@ -125,7 +146,26 @@ export class OarAngleTracker {
     this.lastEventT = -Infinity;
     this.lastCatch = null;
     this.lastFinish = null;
+    this.lastFeatherOn = null;
     this.events = [];
+    this._featherTrusted = true;
+    this._driveLeakCount = 0;
+    this._driveDone = 0;
+    this._awaitingFeather = false;
+    this._resetDriveStats();
+  }
+
+  _resetDriveStats() {
+    this._driveN = 0;
+    this._driveSumTh = 0;
+    this._driveSumFe = 0;
+    this._driveSumThTh = 0;
+    this._driveSumFeFe = 0;
+    this._driveSumThFe = 0;
+    this._driveMinTh = Infinity;
+    this._driveMaxTh = -Infinity;
+    this._driveMinFe = Infinity;
+    this._driveMaxFe = -Infinity;
   }
 
   setSign(sign) {
@@ -145,6 +185,12 @@ export class OarAngleTracker {
     this._expect = "catch";
     this.zeroed = true;
     this.theta = 0;
+    this._featherTrusted = true;
+    this._driveLeakCount = 0;
+    this._driveDone = 0;
+    this._awaitingFeather = false;
+    this.lastFeatherOn = null;
+    this._resetDriveStats();
   }
 
   reset() {
@@ -156,7 +202,9 @@ export class OarAngleTracker {
     this.events = [];
     this.lastCatch = null;
     this.lastFinish = null;
+    this.lastFeatherOn = null;
     this._expect = "catch";
+    this._awaitingFeather = false;
     this.peakAbsOmega = 0;
     this.lastEventT = -Infinity;
   }
@@ -225,15 +273,62 @@ export class OarAngleTracker {
     this.theta = this._raw - this._dc;
     this.feather = wrap180(featherDeg(this._g, this._shaftAxis) - this._featherRef);
     this.omegaVert = omegaVert;
+    if (dtOk && this._expect === "finish") this._accumDrive(this.theta, this.feather);
     const tOmega = this.prevT != null ? (this.prevT + t) / 2 : t;
+    const events = [];
     const event = this._maybeEvent(t, tOmega, this.theta, omegaVert);
+    if (event) events.push(event);
+    const featherEv = this._maybeFeatherOn(t, this.feather);
+    if (featherEv) events.push(featherEv);
     this.lastOmega = omegaVert;
     this.lastT = t;
     this._tOmega = tOmega;
     this.lastTheta = this.theta;
     this.lastFeather = this.feather;
     this.prevT = t;
-    return { theta: this.theta, omegaVert, event };
+    return {
+      theta: this.theta,
+      omegaVert,
+      event: events[events.length - 1] || null,
+      events,
+    };
+  }
+
+  _accumDrive(theta, feather) {
+    this._driveN += 1;
+    this._driveSumTh += theta;
+    this._driveSumFe += feather;
+    this._driveSumThTh += theta * theta;
+    this._driveSumFeFe += feather * feather;
+    this._driveSumThFe += theta * feather;
+    this._driveMinTh = Math.min(this._driveMinTh, theta);
+    this._driveMaxTh = Math.max(this._driveMaxTh, theta);
+    this._driveMinFe = Math.min(this._driveMinFe, feather);
+    this._driveMaxFe = Math.max(this._driveMaxFe, feather);
+  }
+
+  _scoreDriveLeak() {
+    const n = this._driveN;
+    const r = pearson(
+      n,
+      this._driveSumTh,
+      this._driveSumFe,
+      this._driveSumThTh,
+      this._driveSumFeFe,
+      this._driveSumThFe
+    );
+    const thRange = this._driveMaxTh - this._driveMinTh;
+    const feRange = this._driveMaxFe - this._driveMinFe;
+    const leaked =
+      Math.abs(r) > FEATHER_TRACK_R ||
+      (thRange > 15 && feRange > FEATHER_TRACK_RANGE * thRange);
+    this._driveDone += 1;
+    if (leaked) this._driveLeakCount += 1;
+    if (this._driveDone >= FEATHER_TRUST_DRIVES) {
+      this._featherTrusted = this._driveLeakCount < FEATHER_TRUST_DRIVES;
+    }
+    this._resetDriveStats();
+    return leaked;
   }
 
   _lockStrokeDc(finishEvent) {
@@ -288,16 +383,53 @@ export class OarAngleTracker {
       omegaPeak: this.peakAbsOmega,
     };
 
-    if (type === "catch") this.lastCatch = event;
-    else {
+    if (type === "catch") {
+      this.lastCatch = event;
+      this._awaitingFeather = false;
+      this._resetDriveStats();
+    } else {
       this.lastFinish = event;
       this._lockStrokeDc(event);
+      const leaked = this._scoreDriveLeak();
+      this._awaitingFeather = this._featherTrusted && !leaked;
     }
     this._expect = type === "catch" ? "finish" : "catch";
     this.events.push(event);
     if (this.events.length > 48) this.events.shift();
     this.peakAbsOmega = 0;
     this.lastEventT = tCross;
+    if (this.onEvent) this.onEvent(event);
+    return event;
+  }
+
+  /**
+   * First |feather| up-cross through 45° after finish, before the next catch.
+   * Squared-only pieces never fire. Fan-tracking drives suppress this.
+   */
+  _maybeFeatherOn(t, feather) {
+    if (!this._awaitingFeather || !this.lastFinish) return null;
+    if (this.prevT == null) return null;
+    const lastAbs = Math.abs(this.lastFeather);
+    const absNow = Math.abs(feather);
+    if (!(lastAbs < FEATHER_ON_DEG && absNow >= FEATHER_ON_DEG)) return null;
+    const tCross = interpolateLevel(
+      this.lastT,
+      lastAbs,
+      t,
+      absNow,
+      FEATHER_ON_DEG
+    );
+    const event = {
+      type: "feather",
+      t: tCross,
+      theta: this.theta,
+      feather: absNow >= FEATHER_ON_DEG ? feather : this.lastFeather,
+      trusted: this._featherTrusted,
+    };
+    this._awaitingFeather = false;
+    this.lastFeatherOn = event;
+    this.events.push(event);
+    if (this.events.length > 48) this.events.shift();
     if (this.onEvent) this.onEvent(event);
     return event;
   }
@@ -322,8 +454,10 @@ export class OarAngleTracker {
       zeroed: this.zeroed,
       lastCatch: this.lastCatch,
       lastFinish: this.lastFinish,
+      lastFeatherOn: this.lastFeatherOn,
       arcDeg: arc,
       feather: this.feather,
+      featherTrusted: this._featherTrusted,
       source: this._source,
       walkDeg: this._lastWalk,
       dcStrokes: this._dcStrokes,

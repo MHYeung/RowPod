@@ -2,192 +2,132 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>C3-Tracker Web BLE</title>
-  <link rel="stylesheet" href="styles.css?v=16.8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#392d37" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>RowPod 1.4.4</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="overtec-mark.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="rowpod.css?v=1.4.4" />
 </head>
 <body>
   <header>
-    <h1>C3-Tracker</h1>
-    <p class="sub">Fusion-grade capture, pod fleet summary, and HYROX training · dashboard v16 · <a href="./rowpod.html?v=1.3.0">RowPod 1.3.0</a></p>
+    <div class="brand">
+      <h1>RowPod <span data-rowpod-version>1.4.4</span></h1>
+      <p class="sub">Oar arc, blade length, and catch timing</p>
+    </div>
+    <a class="lab-link" href="./lab.html">IMU lab</a>
   </header>
 
   <section class="controls">
     <button id="btnAddPod" type="button">Add pod</button>
-    <button id="btnDisconnect" type="button" disabled>Disconnect all</button>
-    <span id="status" class="status">No pods connected</span>
+    <button id="btnDisconnect" type="button" disabled>Disconnect</button>
+    <button id="btnZero" type="button" disabled>Zero</button>
+    <button id="btnStart" type="button" disabled>Start piece</button>
+    <button id="btnStop" type="button" disabled>Stop</button>
+    <button id="btnCsv" type="button" disabled>Stroke CSV</button>
   </section>
 
-  <nav class="tabs" role="tablist">
-    <button type="button" class="tab active" data-tab="summary" role="tab" aria-selected="true">Summary</button>
-    <button type="button" class="tab" data-tab="plots" role="tab" aria-selected="false">Plots</button>
-    <button type="button" class="tab" data-tab="orientation" role="tab" aria-selected="false">Orientation</button>
-    <button type="button" class="tab" data-tab="hyrox" role="tab" aria-selected="false">HYROX</button>
-    <button type="button" class="tab" data-tab="logging" role="tab" aria-selected="false">CSV log</button>
-    <button type="button" class="tab" data-tab="battery-test" role="tab" aria-selected="false">Battery test</button>
-  </nav>
+  <section class="rig" aria-label="Boat class">
+    <label>
+      Boat
+      <select id="boatClass"></select>
+    </label>
+    <span id="boatKind" class="rig-kind">sweep</span>
+    <label>
+      Stroke sits
+      <select id="strokeSits">
+        <option value="starboard">Starboard</option>
+        <option value="port">Port</option>
+      </select>
+    </label>
+    <label>
+      Sample
+      <select id="crewPreset"></select>
+    </label>
+    <label>
+      Inboard
+      <input id="inboardCm" type="number" min="50" max="200" step="1" inputmode="decimal" />
+      <span class="rig-unit">cm</span>
+    </label>
+    <label>
+      Outboard
+      <input id="outboardCm" type="number" min="100" max="400" step="1" inputmode="decimal" />
+      <span class="rig-unit">cm</span>
+    </label>
+  </section>
+  <p id="status" class="status">Android Chrome or desktop Chrome/Edge. Add one pod per oar.</p>
 
-  <section id="panel-summary" class="tab-panel active" role="tabpanel">
-    <p class="hint">
-      Fleet view: battery, stream health, sample rate, gaps, and a short activity
-      trace for every connected pod. Select a card to drive the detailed views.
-    </p>
-    <section class="summary-kpis">
-      <div>Pods: <strong id="podCount">0</strong></div>
-      <div>Healthy sensors: <strong id="healthyCount">0</strong></div>
-      <div>Mean rate: <strong id="fleetRate">—</strong> Hz</div>
-      <div>Mean battery: <strong id="fleetBattery">—</strong></div>
-    </section>
-    <section class="pods" id="podList" aria-label="Connected pods"></section>
-    <section class="stats">
-      <div>Selected rate: <strong id="rate">—</strong> Hz</div>
-      <div>Selected gaps: <strong id="gaps">0</strong></div>
-      <div>Meta: <strong id="meta">—</strong></div>
-    </section>
-    <section class="integrity" aria-label="Capture integrity">
-      <h2>Capture integrity</h2>
-      <div id="captureIntegrity" class="integrity-body">
-        Connect a pod to inspect capture integrity.
+  <section class="headline" aria-live="polite">
+    <div class="sync-pct">
+      <strong id="syncPct">—</strong>
+      <span>in sync</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi-stack">
+        Arc <strong id="arcLive">—</strong>
+        <span class="kpi-blade">Blade <strong id="bladeLive">—</strong></span>
       </div>
-    </section>
-  </section>
-
-  <section id="panel-plots" class="tab-panel" role="tabpanel" hidden>
-    <p class="hint">
-      Overlay compares the same channels across pods. Each pod color marks its traces.
-      Software sync estimates clock offset for CSV timestamps; it is not sample-level IMU sync.
-    </p>
-    <section class="toggles" id="toggles"></section>
-    <section class="plots">
-      <figure>
-        <figcaption>Accelerometer — auto scale overlay</figcaption>
-        <canvas id="plotAccel" width="900" height="200"></canvas>
-      </figure>
-      <figure>
-        <figcaption>Gyroscope — auto scale overlay</figcaption>
-        <canvas id="plotGyro" width="900" height="200"></canvas>
-      </figure>
-      <figure>
-        <figcaption>Magnetometer (G) — auto scale overlay</figcaption>
-        <canvas id="plotMag" width="900" height="200"></canvas>
-      </figure>
-    </section>
-  </section>
-
-  <section id="panel-orientation" class="tab-panel" role="tabpanel" hidden>
-    <p class="hint">
-      Cube attitude from on-device Mahony (gyro + accel + mag yaw correction).
-    </p>
-    <figure class="cube-wrap">
-      <figcaption>Selected pod orientation</figcaption>
-      <canvas id="plotCube" width="640" height="420"></canvas>
-    </figure>
-  </section>
-
-  <section id="panel-hyrox" class="tab-panel" role="tabpanel" hidden>
-    <p class="hint">
-      HYROX mode is a training assistant: it estimates work/rest, motion
-      intensity, and candidate repetitions from IMU motion. It does not claim
-      exact running distance or official race timing.
-    </p>
-    <section class="hyrox-controls">
-      <label>
-        Station
-        <select id="hyroxStation">
-          <option value="run">Run</option>
-          <option value="ski">SkiErg</option>
-          <option value="sled_push">Sled push</option>
-          <option value="sled_pull">Sled pull</option>
-          <option value="burpee">Burpee broad jump</option>
-          <option value="row">Row</option>
-          <option value="carry">Farmers carry</option>
-          <option value="lunge">Sandbag lunges</option>
-          <option value="wall_ball">Wall balls</option>
-        </select>
-      </label>
-      <button id="btnHyroxStart" type="button" disabled>Start HYROX set</button>
-      <button id="btnHyroxStop" type="button" disabled>Stop set</button>
-      <span id="hyroxState" class="status">Idle</span>
-    </section>
-    <section class="hyrox-kpis">
-      <div>Elapsed: <strong id="hyroxElapsed">0:00</strong></div>
-      <div>Reps: <strong id="hyroxReps">0</strong></div>
-      <div>Cadence: <strong id="hyroxCadence">—</strong></div>
-      <div>Effort: <strong id="hyroxEffort">—</strong></div>
-      <div>Work: <strong id="hyroxWork">0 s</strong></div>
-    </section>
-    <p id="hyroxQuality" class="hint">Connect a pod and choose a station.</p>
-  </section>
-
-  <section id="panel-logging" class="tab-panel" role="tabpanel" hidden>
-    <p class="hint">
-      Calibrate the magnetometer in the assembled enclosure first: slow figure-8 and
-      tumble through nose/tail/side-down (not flat table spins). Logging uses 448 Hz
-      for one pod and 112 Hz for two or more (prefers max rate over zero-loss)
-      and brackets motion with two-second stationary bias intervals.
-      Start runs a transport preflight; stop waits for a device drain-complete barrier.
-      The CSV stores on-device Mahony quaternions plus the accel and mag the filter used.
-    </p>
-    <section class="log-controls">
-      <button id="btnLogStart" type="button" disabled>Start</button>
-      <button id="btnLogStop" type="button" disabled>Stop</button>
-      <button id="btnMagCal" type="button" disabled>Calibrate mag (30 s)</button>
-      <button id="btnLogDownload" type="button" disabled>Download CSV (Mahony)</button>
-      <button id="btnLogClear" type="button" disabled>Clear</button>
-      <span class="status">Rows: <strong id="logRows">0</strong> · <strong id="logState">idle</strong></span>
-    </section>
-  </section>
-
-  <section id="panel-battery-test" class="tab-panel" role="tabpanel" hidden>
-    <p class="hint">
-      Connected endurance logger: records pack voltage, percentage, connection
-      state, actual rate, gaps, and outliers for every pod. Keep this browser tab
-      visible; a hidden browser can delay scheduled samples. This measures runtime
-      behavior, not battery capacity in mAh.
-    </p>
-    <section class="test-controls">
-      <label>
-        Test label
-        <input id="testLabel" type="text" maxlength="48"
-          placeholder="e.g. one-pod-56Hz-live" />
-      </label>
-      <label>
-        Sample interval
-        <select id="testInterval">
-          <option value="30">30 s</option>
-          <option value="60" selected>60 s</option>
-          <option value="300">5 min</option>
-        </select>
-      </label>
-      <button id="btnTestStart" type="button" disabled>Start status log</button>
-      <button id="btnTestStop" type="button" disabled>Stop</button>
-      <button id="btnTestDownload" type="button" disabled>Download status CSV</button>
-      <button id="btnTestClear" type="button" disabled>Clear</button>
-    </section>
-    <section class="test-kpis">
-      <div>Elapsed: <strong id="testElapsed">0:00</strong></div>
-      <div>Status rows: <strong id="testRows">0</strong></div>
-      <div>State: <strong id="testState">idle</strong></div>
-    </section>
-    <div class="test-table-wrap">
-      <table class="test-table">
-        <caption>Latest logged device status</caption>
-        <thead>
-          <tr>
-            <th>Pod</th>
-            <th>Elapsed</th>
-            <th>Battery</th>
-            <th>Link / sensor</th>
-            <th>Rate</th>
-            <th>Gaps</th>
-            <th>Outliers</th>
-          </tr>
-        </thead>
-        <tbody id="testLatest"></tbody>
-      </table>
+      <div>SPM <strong id="spm">—</strong></div>
+      <div>Catch spread <strong id="catchSpread">—</strong></div>
+      <div>Finish spread <strong id="finishSpread">—</strong></div>
+      <div>Strokes <strong id="strokeCount">0</strong></div>
+      <div>Feather <strong id="featherLive">—</strong></div>
+    </div>
+    <p id="catchCue" class="catch-cue">Waiting for another catch vs stroke</p>
+    <div id="alignRail" class="align-rail" hidden>
+      <span class="align-end">early</span>
+      <div id="alignTrack" class="align-track"></div>
+      <span class="align-end">late</span>
     </div>
   </section>
 
-  <script type="module" src="app.js?v=16.8"></script>
+  <figure class="fan-wrap">
+    <figcaption>180° overlay · catch (bow) left · finish (stern) right · 0° perpendicular</figcaption>
+    <canvas id="fan" width="720" height="432"></canvas>
+  </figure>
+
+  <section class="threshold">
+    <label>
+      In-sync window
+      <input id="thresholdMs" type="range" min="10" max="80" step="5" value="40" />
+      <span id="thresholdLabel">40 ms</span>
+    </label>
+  </section>
+
+  <section class="table-wrap">
+    <table>
+      <caption>Catch vs stroke (last stroke) <span id="matchNote" class="match-note"></span></caption>
+      <thead>
+        <tr>
+          <th>Seat</th>
+          <th>Hand</th>
+          <th>Catch</th>
+          <th>Finish</th>
+          <th>Arc</th>
+          <th>Length</th>
+          <th>Feather Δt</th>
+          <th>vs stroke</th>
+          <th>Δ finish</th>
+          <th>Clock</th>
+        </tr>
+      </thead>
+      <tbody id="seatRows"></tbody>
+    </table>
+  </section>
+
+  <section id="podList" class="pod-assign" aria-label="Seat assignment"></section>
+
+  <p class="footnote">
+    Mount the pod on the oar shaft inboard of the gate. Pick boat class, then
+    seat and stroke-side vs bow-side. Hold squared and perpendicular, then tap
+    Zero. Type pin-to-blade (outboard) before the piece. Arc is finish minus
+    catch; blade metres use outboard. Feather Δt is the roll after finish vs
+    stroke — blank if the blade never crossed 45° or if feather tracks the fan.
+    In-sync needs two seats with a catch and a finish. iPhone Safari cannot use
+    Web Bluetooth.
+  </p>
+
+  <script type="module" src="rowpod.js?v=1.4.4"></script>
 </body>
 </html>

@@ -9,8 +9,19 @@
  * eight (stroke on starboard) and an opposite-rig boat both map correctly.
  */
 
+import { defaultSpansForKind } from "./rowing_length.js";
+
 export const HAND_STROKE = "stroke";
 export const HAND_BOW = "bow";
+
+/** Who to instrument on 2–4 BLE links. Does not add radios. */
+export const CREW_PRESETS = [
+  { id: "all", label: "All connected", seats: null },
+  { id: "pair", label: "Pair — stroke + bow", seats: ["stroke", "bow"] },
+  { id: "four", label: "Four sample — stroke, 3, bow", seats: ["stroke", "3", "bow"] },
+  { id: "eight_3", label: "Eight sample — stroke, 3, bow", seats: ["stroke", "3", "bow"] },
+  { id: "eight_mid", label: "Eight sample — stroke, 4, 2", seats: ["stroke", "4", "2"] },
+];
 
 export const BOAT_CLASSES = {
   "2x": {
@@ -96,23 +107,55 @@ export function portStarboardFromHand(hand, strokeSits) {
   return hand === HAND_BOW ? bowSide : strokeSide;
 }
 
+function parseSpanM(v, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0 || n > 8) return fallback;
+  return n;
+}
+
 export function loadRig() {
   try {
     const raw = JSON.parse(localStorage.getItem(RIG_STORE_KEY) || "{}");
     const boatClass = BOAT_CLASSES[raw.boatClass] ? raw.boatClass : "8+";
     const strokeSits = raw.strokeSits === "port" ? "port" : "starboard";
-    return { boatClass, strokeSits };
+    const defaults = defaultSpansForKind(getBoatClass(boatClass).kind);
+    const spansCustom = raw.spansCustom === true;
+    return {
+      boatClass,
+      strokeSits,
+      inboardM: parseSpanM(raw.inboardM, defaults.inboardM),
+      outboardM: parseSpanM(raw.outboardM, defaults.outboardM),
+      spansCustom,
+    };
   } catch {
-    return { boatClass: "8+", strokeSits: "starboard" };
+    const defaults = defaultSpansForKind("sweep");
+    return {
+      boatClass: "8+",
+      strokeSits: "starboard",
+      ...defaults,
+      spansCustom: false,
+    };
   }
 }
 
 export function saveRig(rig) {
+  const boatClass = getBoatClass(rig.boatClass).id;
+  const defaults = defaultSpansForKind(getBoatClass(boatClass).kind);
   localStorage.setItem(
     RIG_STORE_KEY,
     JSON.stringify({
-      boatClass: getBoatClass(rig.boatClass).id,
+      boatClass,
       strokeSits: rig.strokeSits === "port" ? "port" : "starboard",
+      inboardM: parseSpanM(rig.inboardM, defaults.inboardM),
+      outboardM: parseSpanM(rig.outboardM, defaults.outboardM),
+      spansCustom: rig.spansCustom === true,
     })
   );
+}
+
+/** Fill scull/sweep defaults unless the coach typed spans. */
+export function rigWithBoatClass(rig, boatClassId) {
+  const boatClass = getBoatClass(boatClassId).id;
+  if (rig.spansCustom) return { ...rig, boatClass };
+  return { ...rig, boatClass, ...defaultSpansForKind(getBoatClass(boatClass).kind) };
 }

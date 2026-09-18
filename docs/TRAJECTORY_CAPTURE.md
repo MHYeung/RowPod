@@ -6,7 +6,7 @@ constrains heading; it does not observe translation.
 
 ## Before collecting data
 
-1. Flash the current firmware and open dashboard v16 over HTTPS (`/?v=16.8` locally).
+1. Flash the current firmware and open the IMU lab over HTTPS (`/lab.html?v=16.8` locally).
 2. Connect one pod and select **Calibrate mag (30 s)**.
 3. Move the assembled pod in a slow figure-8 and tumble it through
    nose-down / tail-down / each side-down. Flat table spins leave one axis

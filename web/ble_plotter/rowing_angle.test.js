@@ -4,13 +4,23 @@
  * Run: node web/ble_plotter/rowing_angle.test.js
  */
 import { OarAngleTracker, gravityBodyFromQuat, wrap180, yawAboutGravityDeg, pickShaftAxis, featherDeg } from "./rowing_angle.js";
-import { CrewSync, strokesToCsv } from "./rowing_crew.js";
+import { CrewSync, strokesToCsv, coachCatchCue, formatCatchVsStroke, featherDtVsRefMs, STROKE_CSV_COLUMNS } from "./rowing_crew.js";
 import { PodTimeBase, extendSampleIndex, weightedLinearFit } from "./timebase.js";
 import {
   defaultHandForSeat,
   portStarboardFromHand,
   getBoatClass,
+  rigWithBoatClass,
 } from "./boat_rig.js";
+import { bladeArcM, driveArcDeg, defaultSpansForKind, spanCmToM } from "./rowing_length.js";
+import {
+  FAN_ARC_CCW,
+  FAN_MAX_DEG,
+  clampFanDeg,
+  oarToCanvasRad,
+  oarToXY,
+  seatLaneRadius,
+} from "./rowing_fan.js";
 
 let passed = 0;
 let failed = 0;
@@ -179,6 +189,162 @@ function catchTimes(ampUnused, spm, seconds) {
   assert(csv.includes("hand,pod_id"), "csv has hand column");
   assert(csv.includes("boat_class=8+"), "csv stamps boat class");
   assert(csv.split("\n").length > 10, "csv has seat rows");
+  assert(csv.includes("match_quality"), "csv has match_quality");
+}
+
+/* --- 1.4 match_forward_no_half_period_alias --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  const rms = { timebaseRmsMs: 5 };
+  crew.observeEvent("stroke", { type: "catch", t: 2000, theta: -50 }, { seat: "stroke", ...rms });
+  crew.observeEvent("stroke", { type: "finish", t: 2800, theta: 30 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "catch", t: 1400, theta: -48 }, { seat: "bow", ...rms });
+  crew.observeEvent("bow", { type: "finish", t: 2790, theta: 31 }, { seat: "bow", ...rms });
+  const last = crew.snapshot().last;
+  assertEq(last.completeSeats, 1, "do not pair a catch 600 ms before reference");
+  assert(last.inSync !== true, "aliased pair is not in-sync");
+  assertEq(last.matchQuality, "single_seat", "quality is single_seat");
+}
+
+/* --- 1.4 in_sync_undefined_when_single_seat --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  for (let i = 0; i < 4; i++) {
+    const t = 1000 + i * 2000;
+    crew.observeEvent("stroke", { type: "catch", t, theta: -50 }, { seat: "stroke", timebaseRmsMs: 5 });
+    crew.observeEvent("stroke", { type: "finish", t: t + 800, theta: 35 }, { seat: "stroke", timebaseRmsMs: 5 });
+  }
+  crew.commit();
+  const snap = crew.snapshot();
+  assert(snap.ratedStrokes === 0, "single seat is not rated for in-sync");
+  assert(snap.timeInSyncPct === 0, "single seat cannot score 100% in-sync");
+  const csv = strokesToCsv(snap.strokes);
+  assert(
+    snap.strokes.every((s) => s.inSync !== true),
+    "no stroke marked in-sync"
+  );
+  assert(csv.includes("single_seat"), "csv records single_seat");
+  assert(
+    !csv.split("\n").filter((l) => l && !l.startsWith("#") && l.includes("single_seat")).some((l) => l.includes(",1,single_seat")),
+    "csv does not write in_sync=1 for single seat"
+  );
+}
+
+/* --- 1.4 in_sync_undefined_when_finish_missing --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke", timebaseRmsMs: 5 });
+  crew.observeEvent("bow", { type: "catch", t: 1012, theta: -48 }, { seat: "bow", timebaseRmsMs: 5 });
+  crew.observeEvent("stroke", { type: "finish", t: 1800, theta: 30 }, { seat: "stroke", timebaseRmsMs: 5 });
+  const last = crew.snapshot().last;
+  assertEq(last.matchQuality, "missing_finish", "missing finish quality");
+  assert(last.inSync == null, "in-sync undefined when a finish is missing");
+  assertNear(last.catchSpreadMs, 12, 0.1, "catch spread still scored without a finish");
+  const cue = coachCatchCue(last, 40);
+  assert(cue.text.includes("12 ms late"), `cue names the catch miss (got ${cue.text})`);
+  crew.commit();
+  const csv = strokesToCsv(crew.strokes);
+  const data = csv.split("\n").filter((l) => l && !l.startsWith("#") && !l.startsWith("stroke_index"));
+  assert(
+    data.every((l) => /,missing_finish,/.test(l)),
+    "csv does not write in_sync=1 without finishes"
+  );
+  const bow = data.find((l) => l.split(",")[1] === "bow");
+  const cols = bow.split(",");
+  const names = STROKE_CSV_COLUMNS.split(",");
+  assertEq(cols[names.indexOf("arc_deg")], "", "missing finish has empty arc");
+  assertEq(cols[names.indexOf("blade_arc_m")], "", "missing finish has empty length");
+}
+
+/* --- 1.4 in_sync_undefined_when_clock_untrusted --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke", timebaseRmsMs: 40 });
+  crew.observeEvent("bow", { type: "catch", t: 1010, theta: -48 }, { seat: "bow", timebaseRmsMs: 40 });
+  crew.observeEvent("stroke", { type: "finish", t: 1800, theta: 30 }, { seat: "stroke", timebaseRmsMs: 40 });
+  crew.observeEvent("bow", { type: "finish", t: 1815, theta: 32 }, { seat: "bow", timebaseRmsMs: 40 });
+  const last = crew.snapshot().last;
+  assertEq(last.matchQuality, "untrusted_time", "clock rms 40 ms is untrusted");
+  assert(last.inSync == null, "in-sync undefined when clock is untrusted");
+  crew.commit();
+  const csv = strokesToCsv(crew.strokes);
+  assert(csv.includes("UNTRUSTED_TIME"), "csv persists UNTRUSTED_TIME");
+}
+
+/* --- 1.4 alias guard at 20 and 40 spm --- */
+{
+  for (const spm of [20, 40]) {
+    const period = 60000 / spm;
+    const crew = new CrewSync({ catchSpreadMs: 40 });
+    crew.setReference("stroke");
+    const rms = { timebaseRmsMs: 5 };
+    const t0 = 1000;
+    crew.observeEvent("stroke", { type: "catch", t: t0, theta: -50 }, { seat: "stroke", ...rms });
+    crew.observeEvent("bow", { type: "catch", t: t0 + 8, theta: -48 }, { seat: "bow", ...rms });
+    crew.observeEvent("stroke", { type: "finish", t: t0 + period * 0.4, theta: 30 }, { seat: "stroke", ...rms });
+    crew.observeEvent("bow", { type: "finish", t: t0 + period * 0.4 + 10, theta: 31 }, { seat: "bow", ...rms });
+    const t = t0 + period;
+    crew.observeEvent("stroke", { type: "catch", t, theta: -50 }, { seat: "stroke", ...rms });
+    crew.observeEvent("stroke", { type: "finish", t: t + period * 0.4, theta: 30 }, { seat: "stroke", ...rms });
+    crew.observeEvent("bow", { type: "catch", t: t - 0.45 * period, theta: -48 }, { seat: "bow", ...rms });
+    crew.observeEvent("bow", { type: "finish", t: t + period * 0.4, theta: 31 }, { seat: "bow", ...rms });
+    const last = crew.snapshot().last;
+    assert(last.inSync !== true, `no half-period alias at ${spm} spm`);
+    assertEq(last.completeSeats, 1, `${spm} spm must not consume the previous catch`);
+  }
+}
+
+/* --- 1.4 do not pair stroke N with seat B stroke N+1 --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  const rms = { timebaseRmsMs: 5 };
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke", ...rms });
+  crew.observeEvent("stroke", { type: "finish", t: 1800, theta: 30 }, { seat: "stroke", ...rms });
+  crew.observeEvent("stroke", { type: "catch", t: 3000, theta: -50 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "catch", t: 3010, theta: -48 }, { seat: "bow", ...rms });
+  crew.observeEvent("stroke", { type: "finish", t: 3800, theta: 30 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "finish", t: 3820, theta: 31 }, { seat: "bow", ...rms });
+  crew.commit();
+  assertEq(crew.strokes[0].completeSeats, 1, "stroke 1 stays unmatched if bow is late");
+  assert(crew.strokes[0].inSync == null, "stroke 1 is not rated");
+  assertEq(crew.strokes[1].completeSeats, 2, "bow catch 3010 belongs to stroke 2");
+  assertNear(crew.strokes[1].catchSpreadMs, 10, 0.1, "stroke 2 spread is 10 ms");
+  assertEq(crew.strokes[1].inSync, true, "stroke 2 is in-sync");
+}
+
+/* --- 1.4 missing timebase rms is not untrusted --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke" });
+  crew.observeEvent("bow", { type: "catch", t: 1010, theta: -48 }, { seat: "bow" });
+  crew.observeEvent("stroke", { type: "finish", t: 1800, theta: 30 }, { seat: "stroke" });
+  crew.observeEvent("bow", { type: "finish", t: 1815, theta: 32 }, { seat: "bow" });
+  const last = crew.snapshot().last;
+  assertEq(last.matchQuality, "ok", "omitted rms is trusted");
+  assertEq(last.inSync, true, "omitted rms can still rate in-sync");
+}
+
+/* --- 1.4 sample filter ignores extra seats --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  crew.setActiveSeats(["stroke", "bow"]);
+  const rms = { timebaseRmsMs: 5 };
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "catch", t: 1008, theta: -48 }, { seat: "bow", ...rms });
+  crew.observeEvent("three", { type: "catch", t: 1700, theta: -40 }, { seat: "3", ...rms });
+  crew.observeEvent("stroke", { type: "finish", t: 1800, theta: 30 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "finish", t: 1810, theta: 31 }, { seat: "bow", ...rms });
+  crew.observeEvent("three", { type: "finish", t: 2500, theta: 20 }, { seat: "3", ...rms });
+  const last = crew.snapshot().last;
+  assertEq(last.completeSeats, 2, "sampled pair ignores seat 3");
+  assertNear(last.catchSpreadMs, 8, 0.1, "spread is stroke vs bow only");
 }
 
 /* --- rigid-bar bench: identical motion, independent clocks --- */
@@ -405,6 +571,224 @@ function catchTimes(ampUnused, spm, seconds) {
   );
   assertEq(portStarboardFromHand("bow", "starboard"), "port", "bow-side is port");
   assertEq(portStarboardFromHand("bow", "port"), "starboard", "opposite rig");
+}
+
+/* --- 1.4.1 180° fan geometry --- */
+{
+  assertEq(FAN_ARC_CCW, false, "upper semicircle is canvas clockwise");
+  assertEq(FAN_MAX_DEG, 90, "fan is ±90°");
+  assertEq(clampFanDeg(-122), -90, "walked catch clamps to -90");
+  assertEq(clampFanDeg(78), 78, "finish +78 stays on scale");
+  const o = oarToXY(0, 100, 0, 0);
+  assert(Math.abs(o.x) < 1e-9 && Math.abs(o.y + 100) < 1e-9, "0° is straight up");
+  const c = oarToXY(-90, 100, 0, 0);
+  assert(Math.abs(c.x + 100) < 1e-9 && Math.abs(c.y) < 1e-9, "-90° is left");
+  const f = oarToXY(90, 100, 0, 0);
+  assert(Math.abs(f.x - 100) < 1e-9 && Math.abs(f.y) < 1e-9, "+90° is right");
+  const mid = oarToXY((-60 + 30) / 2, 100, 0, 0);
+  assert(mid.y < -50, "catch→finish midpoint stays in the upper half");
+  assertNear(oarToCanvasRad(-90), -Math.PI, 1e-9, "catch rim is canvas -π");
+  assertNear(oarToCanvasRad(90), 0, 1e-9, "finish rim is canvas 0");
+  assertNear(seatLaneRadius(0, 2, 100), 80, 0.1, "outer seat lane");
+  assertNear(seatLaneRadius(1, 2, 100), 44, 0.1, "inner seat lane");
+}
+
+/* --- 1.4.2 catch late/early vs stroke --- */
+{
+  assertEq(formatCatchVsStroke(12, 40).text, "12 ms late", "late copy");
+  assertEq(formatCatchVsStroke(-8, 40).text, "8 ms early", "early copy");
+  assertEq(formatCatchVsStroke(12, 40).kind, "in", "12 ms is inside 40 ms");
+  assertEq(formatCatchVsStroke(48, 40).kind, "out", "48 ms is outside 40 ms");
+  assertEq(formatCatchVsStroke(313, 40).kind, "untrusted", "300 ms is not a crew miss");
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke", timebaseRmsMs: 5 });
+  crew.observeEvent("bow", { type: "catch", t: 1012, theta: -48 }, { seat: "bow", timebaseRmsMs: 5 });
+  const cue = coachCatchCue(crew.snapshot().last, 40);
+  assertEq(cue.text, "bow 12 ms late", "live cue before finishes");
+}
+
+/* --- 1.4.3 drive arc, blade metres, spans --- */
+{
+  assertNear(bladeArcM(90, 2), Math.PI, 1e-9, "90° × 2.00 m = π m");
+  assertNear(driveArcDeg(-50, 29), 79, 1e-9, "79° drive");
+  assertEq(driveArcDeg(-50, undefined), null, "missing finish has no arc");
+  assertEq(bladeArcM(null, 2), null, "no metres without arc");
+  assertNear(defaultSpansForKind("scull").outboardM, 2, 1e-9, "scull outboard");
+  assertNear(defaultSpansForKind("sweep").outboardM, 2.61, 1e-9, "sweep outboard");
+  assertNear(spanCmToM(261, 2), 2.61, 1e-9, "cm to m");
+  const filled = rigWithBoatClass(
+    { boatClass: "8+", strokeSits: "starboard", inboardM: 1.15, outboardM: 2.61, spansCustom: false },
+    "2x"
+  );
+  assertNear(filled.outboardM, 2, 1e-9, "scull defaults replace sweep when not custom");
+  const kept = rigWithBoatClass(
+    { boatClass: "8+", strokeSits: "starboard", inboardM: 1.2, outboardM: 2.7, spansCustom: true },
+    "2x"
+  );
+  assertNear(kept.outboardM, 2.7, 1e-9, "typed spans survive boat-class change");
+}
+
+/* --- 1.4.3 squared-only drive never emits feather-on --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+  const events = [];
+  tracker.onEvent = (ev) => events.push(ev);
+  const hz = 56;
+  const dt = 1000 / hz;
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  const amp = 45;
+  const spm = 30;
+  const f = spm / 60;
+  const n = Math.round(8 * hz);
+  for (let i = 1; i < n; i++) {
+    const t = i * dt;
+    const sec = t / 1000;
+    const gz = amp * 2 * Math.PI * f * Math.cos(2 * Math.PI * f * sec);
+    tracker.update(
+      { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz } },
+      t
+    );
+  }
+  assert(events.some((e) => e.type === "finish"), "squared piece still finishes");
+  assertEq(
+    events.filter((e) => e.type === "feather").length,
+    0,
+    "squared-only has no feather-on"
+  );
+}
+
+/* --- 1.4.3 roll after finish → one interpolated feather-on --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 250 });
+  const events = [];
+  tracker.onEvent = (ev) => events.push(ev);
+  const dt = 1000 / 56;
+  let t = 0;
+  const step = (gz, ms, g = { ax: 0, ay: 0, az: 1 }) => {
+    const n = Math.round(ms / dt);
+    for (let i = 0; i < n; i++) {
+      t += dt;
+      tracker.update(
+        { protocol: 2, eng: { ax: g.ax, ay: g.ay, az: g.az, gx: 0, gy: 0, gz } },
+        t
+      );
+    }
+  };
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  step(-90, 350);
+  step(110, 90);
+  step(90, 500);
+  step(-110, 90);
+  const afterFinish = t;
+  step(-12, 450, { ax: 0, ay: 1, az: 0 });
+  const feathers = events.filter((e) => e.type === "feather");
+  assertEq(feathers.length, 1, "one feather-on after finish");
+  assert(feathers[0].t > afterFinish, "feather-on is after finish");
+  assert(feathers[0].t < afterFinish + 450, "feather-on during the roll");
+}
+
+/* --- 1.4.3 synced feather Δt 20 ms; CSV columns --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  const rms = { timebaseRmsMs: 5 };
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "catch", t: 1010, theta: -48 }, { seat: "bow", ...rms });
+  crew.observeEvent("stroke", { type: "finish", t: 1800, theta: 30 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "finish", t: 1810, theta: 31 }, { seat: "bow", ...rms });
+  crew.observeEvent("stroke", { type: "feather", t: 1900, feather: 50, trusted: true }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "feather", t: 1920, feather: 50, trusted: true }, { seat: "bow", ...rms });
+  const last = crew.snapshot().last;
+  const stroke = last.seats.find((s) => s.id === "stroke");
+  const bow = last.seats.find((s) => s.id === "bow");
+  assertNear(featherDtVsRefMs(bow, stroke), 20, 0.1, "bow 20 ms late to feather");
+  crew.commit();
+  const csv = strokesToCsv(crew.strokes, 0, {
+    boatClass: "2-",
+    strokeSits: "starboard",
+    inboardM: 1.15,
+    outboardM: 2,
+  });
+  assert(csv.includes("t_feather_ms"), "csv has t_feather_ms");
+  assert(csv.includes("feather_dt_vs_ref_ms"), "csv has feather dt");
+  assert(csv.includes("blade_arc_m"), "csv has blade_arc_m");
+  assert(csv.includes("outboard_m=2.000"), "csv stamps outboard");
+  assert(csv.includes("inboard_m=1.150"), "csv stamps inboard");
+  assert(csv.includes("20.0"), "csv writes 20 ms feather dt");
+  const piish = bladeArcM(80, 2).toFixed(3);
+  assert(csv.includes(piish) || csv.includes("2.793"), "csv writes blade metres");
+}
+
+/* --- 1.4.3 fan-tracking feather is untrusted, empty Δt --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+  const events = [];
+  tracker.onEvent = (ev) => events.push(ev);
+  const amp = 45;
+  const spm = 30;
+  const f = spm / 60;
+  const hz = 56;
+  const dt = 1000 / hz;
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  const n = Math.round(10 * hz);
+  for (let i = 1; i < n; i++) {
+    const t = i * dt;
+    const sec = t / 1000;
+    const theta = amp * Math.sin(2 * Math.PI * f * sec);
+    const gz = amp * 2 * Math.PI * f * Math.cos(2 * Math.PI * f * sec);
+    const rad = (theta * Math.PI) / 180;
+    tracker.update(
+      {
+        protocol: 2,
+        eng: { ax: 0, ay: Math.sin(rad), az: Math.cos(rad), gx: 0, gy: 0, gz },
+      },
+      t
+    );
+  }
+  assertEq(tracker.snapshot().featherTrusted, false, "fan-tracking untrusted");
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  const rms = { timebaseRmsMs: 5 };
+  crew.observeEvent("stroke", { type: "catch", t: 1000, theta: -50 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "catch", t: 1010, theta: -48 }, { seat: "bow", ...rms });
+  crew.observeEvent("stroke", { type: "finish", t: 1800, theta: 30 }, { seat: "stroke", ...rms });
+  crew.observeEvent("bow", { type: "finish", t: 1810, theta: 31 }, { seat: "bow", ...rms });
+  crew.observeEvent(
+    "stroke",
+    { type: "feather", t: 1900, feather: 50, trusted: false },
+    { seat: "stroke", ...rms }
+  );
+  crew.observeEvent(
+    "bow",
+    { type: "feather", t: 1920, feather: 50, trusted: false },
+    { seat: "bow", ...rms }
+  );
+  const last = crew.snapshot().last;
+  const stroke = last.seats.find((s) => s.id === "stroke");
+  const bow = last.seats.find((s) => s.id === "bow");
+  assertEq(featherDtVsRefMs(bow, stroke), null, "untrusted feather has empty Δt");
+  crew.commit();
+  const csv = strokesToCsv(crew.strokes, 0, { outboardM: 2 });
+  const names = STROKE_CSV_COLUMNS.split(",");
+  const data = csv.split("\n").filter((l) => l && !l.startsWith("#") && !l.startsWith("stroke_index"));
+  for (const line of data) {
+    const cols = line.split(",");
+    assertEq(cols[names.indexOf("t_feather_ms")], "", "untrusted t_feather empty");
+    assertEq(cols[names.indexOf("feather_dt_vs_ref_ms")], "", "untrusted dt empty");
+  }
 }
 
 console.log(`rowing tests: ${passed} passed, ${failed} failed`);

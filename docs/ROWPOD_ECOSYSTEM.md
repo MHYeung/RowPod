@@ -1,6 +1,6 @@
 # RowPod ecosystem — coaches, athletes, and how we are building it
 
-**Status:** RowPod host **1.3.0** (1 September 2026).  
+**Status:** RowPod host **1.4.4** (17 September 2026).  Pages root is RowPod; IMU lab is `lab.html`.  
 **Hardware:** C3-Tracker pod (ESP32-C3FH4, QMI8658A IMU, QMC5883P magnetometer).  
 **This document** is the product-level map: what the whole stack does for a
 rowing coach or athlete, what is trustworthy today, and how development is
@@ -29,8 +29,8 @@ Oar shaft  →  C3-Tracker pod  →  BLE (56 Hz live)  →  Chrome / Edge
 |--------|------------------|
 | Pod firmware | Samples IMU on a native clock, advertises as `C3-T-XXXX`, streams raw gyro (v16) or fused attitude, battery, and a software sync handshake. |
 | Rowing profile (`PROFILE_ROWING = 2`) | Host tag: keep **56 Hz** so several pods can share the radio. Not the 448 Hz HYROX capture policy. |
-| RowPod PWA (`rowpod.html`) | Catch/finish angles, crew overlay, in-sync %, stroke CSV. |
-| Lab plotter (`index.html`) | Fleet health, raw plots, orientation cube, session CSV, battery tests. |
+| RowPod PWA (`index.html`) | Catch/finish angles, crew overlay, in-sync %, stroke CSV. |
+| IMU lab (`lab.html`) | Fleet health, raw plots, orientation cube, HYROX, session CSV, battery tests. |
 
 **Not in this product yet:** on-pod flash logging of strokes, an iPhone Safari
 client (no Web Bluetooth), eight concurrent GATT links on one phone, or a
@@ -70,15 +70,15 @@ integrity when something looks wrong on the water.
 
 ---
 
-## 3. Features a coach or athlete can use today (RowPod 1.3.0)
+## 3. Features a coach or athlete can use today (RowPod 1.4.4)
 
 ### 3.1 Live picture
 
-- **Fan diagram** — one overlay for every connected oar. **Catch toward the bow
+- **Fan diagram** — 180° overlay (catch −90° left to finish +90° right). **Catch toward the bow
   is left**, finish toward the stern is right, 0° is perpendicular. Port and
   starboard are inverted in software so both hands sweep the **same way**. That
   is a coaching overlay, not a cox’s-eye view of the boat.
-- **Colour per pod** — seats stay distinguishable when arcs overlap.
+- **Colour bars per seat** — thick last-stroke arc with catch° and finish° on the ends.
 - **CATCH / FINISH labels** on the fan so “left” means length, not a math sign.
 - **Live needle** plus last-stroke arc (catch and finish dots).
 - **Blade tick** on the needle: full when squared, edge-on near 90° feather.
@@ -87,7 +87,9 @@ integrity when something looks wrong on the water.
 
 | KPI | Meaning |
 |-----|---------|
-| **In sync %** | Share of matched strokes whose catch spread is inside the coach-set window. |
+| **In sync %** | Share of *rated* strokes (two complete seats + trusted clock) whose catch spread is inside the coach-set window. Shows **—** when nothing is rated. |
+| **Catch vs stroke** | Who is early or late to the catch vs the stroke seat, in milliseconds. Shown as soon as two catches land on the same stroke. Hundreds of ms is not a crew miss. |
+| **Arc / blade** | Last matched stroke’s drive rotation (finish − catch) and blade arc in metres (outboard × θ_rad). Empty until that stroke has a finish. Not distance through the water. |
 | **SPM** | Stroke rate from the reference seat (stroke if assigned). |
 | **Catch / finish spread** | Time between earliest and latest seat on that end of the stroke. |
 | **Strokes** | Matched stroke count this piece. |
@@ -98,9 +100,12 @@ physics constant.
 
 ### 3.3 Per-seat table
 
-Last stroke vs the reference: catch°, finish°, arc, live feather, Δ catch ms,
-Δ finish ms, **clock ±rms**. If clock is tens of milliseconds, do not believe a
-40 ms in-sync call — that number is radio/timebase, not the crew.
+Last stroke vs the reference: catch°, finish°, arc, **length** (blade metres),
+**feather Δt** vs stroke (roll after finish), **vs stroke** (catch early/late
+ms), Δ finish ms, **clock ±rms**. Feather Δt is blank when there is no 45°
+cross, the clock is untrusted, or feather tracks the fan (`feather?`). The
+vs-stroke column only uses that matched stroke’s catch — not a leftover
+last-catch from another stroke.
 
 ### 3.4 Boat and rig (why 5 and 6 stopped looking “backwards”)
 
@@ -112,6 +117,7 @@ like two crews fighting unless the host flips one sign.
 | **Boat** | 2x, 2−, 2+, 4x, 4−, 4+, 4x+, 8+ (scull vs sweep is implied). Seat lists shrink to that boat. |
 | **Stroke sits** | Port or starboard — which gunwale the stroke’s oar is on (standard vs opposite rig). |
 | **Seat** | stroke / 7 / … / bow as allowed by the class. |
+| **Sample** | Which connected seats appear on the fan and in the matcher (pair / stroke+3+bow / stroke+4+2). Still 2–4 radios. |
 | **Hand** | **Stroke side** or **bow side** (which gunwale this pod is on). |
 
 Sweep seats auto-fill hand: stroke, 6, 4, 2 → stroke-side; 7, 5, 3, bow →
@@ -131,11 +137,13 @@ is where the blade is in the stroke.
 2. **Add pod** once per oar (target **2–4** links; an eight will not fit on one
    phone).
 3. Set boat class and Stroke sits. Assign seats and hands.
-4. Square the blades, hold **perpendicular**, tap **Zero**. That sample is 0°
+4. Type **inboard / outboard** (cm). Outboard is pin to blade tip; it scales
+   blade metres. Changing scull ↔ sweep fills defaults unless you typed spans.
+5. Square the blades, hold **perpendicular**, tap **Zero**. That sample is 0°
    oar angle and 0° feather.
-5. **Start piece** → row → **Stop**. Watch spread and who is short.
-6. **Stroke CSV** — long format, one row per seat per stroke, filename
-   `rowpod_1.3.0_strokes_….csv`.
+6. **Start piece** → row → **Stop**. Watch spread, arc, and who is short.
+7. **Stroke CSV** — long format, one row per seat per stroke, filename
+   `rowpod_1.4.4_strokes_….csv`.
 
 Re-Zero after remounting or a long piece if absolute catch degrees have walked.
 **Arc** (finish − catch) is more robust than the absolute catch number.
@@ -143,10 +151,13 @@ Re-Zero after remounting or a long piece if absolute catch degrees have walked.
 ### 3.6 What the CSV is for
 
 After the piece, not during it. Columns include seat, port/starboard, hand,
-catch/finish time and angle, arc, feather at catch and finish, deltas vs the
-reference seat, crew spread, in-sync flag, SPM, and timebase rms.
+catch/finish time and angle, arc, blade metres, feather at catch and finish,
+feather-on time and Δt vs stroke, deltas vs the reference seat, crew spread,
+in-sync flag (empty when not rated), match quality, SPM, timebase rms, and
+clock status.
 
-Header stamps `rowpod_version`, `boat_class`, and `stroke_sits`.
+Header stamps `rowpod_version`, `boat_class`, `stroke_sits`, `inboard_m`, and
+`outboard_m`.
 
 Use it to: plot catch angle over the piece, find who faded, compare two
 outings, or hand data to a sports scientist. Do not treat a 600 ms “spread” as
@@ -162,6 +173,7 @@ on that stroke (see §6).
 | **gyro settling** | Raw gyro, few complete strokes of lock. |
 | **gyro lock** | Preferred: raw gyro, Zeroed, midpoint walk under 8°. |
 | **clock ±N ms** | Timing confidence, separate from angle. |
+| **feather?** | Live feather moved with the fan on the first drives after Zero. Do not coach Feather Δt. |
 
 RowPod **prefers v16 raw gyro · gravity**. It does not integrate magnetometer
 yaw for oar angle. Feather is a **separate** gravity-about-shaft signal.
@@ -177,8 +189,8 @@ yaw for oar angle. Feather is a **separate** gravity-about-shaft signal.
 - **Phone:** Android Chrome, or a laptop in the launch. **iPhone Safari cannot
   connect.** A PWA install on Android still needs Chrome’s Web Bluetooth.
 - **Hosted UI:** GitHub Pages  
-  `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/rowpod.html`  
-  Local: `http://localhost:8080/rowpod.html?v=1.3.0` after
+  `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`  
+  Local: `http://localhost:8080/?v=1.4.4` after
   `python -m http.server 8080` in `web/ble_plotter/`.
 - **Firmware:** flash once with ESP-IDF; most RowPod angle/UI work is
   **host-only** (hard-refresh the page). Profile 2 and 32-bit sync seq need a
@@ -250,7 +262,7 @@ crew timing).
 ## 7. Current development process
 
 This is how the project is actually moving, so a coach or a contributor knows
-what “we shipped 1.3.0” means.
+what “we shipped 1.4.0” means.
 
 ### 7.1 Split of labour
 
@@ -258,7 +270,7 @@ what “we shipped 1.3.0” means.
 |-------|-------------|--------------|
 | **Firmware** (ESP-IDF components under `components/`) | Flash every pod | Radio, sample clock, v16 frames, profile 2, battery, sleep. |
 | **RowPod host** (`web/ble_plotter/rowpod*`, `rowing_*.js`) | Refresh the page | Angle, events, crew match, fan, CSV, boat class. |
-| **Lab host** (`index.html`, `app.js`) | Same Pages deploy | Debug and HYROX. |
+| **Lab host** (`lab.html`, `app.js`) | Same Pages deploy | Debug and HYROX. |
 
 RowPod v1 was specified as **host-owned angle**: the pod sends IMU; the
 browser integrates `ω · ĝ`, finds catch/finish, and matches the crew. That
@@ -281,8 +293,13 @@ platform breaks (native app, new radio, new mount) — not an automatic bump.
 | 1.1.0 | Prefer v16 raw gyro; stroke-midpoint lock; confidence chip. |
 | 1.2.0 | No finish jump (DC leaks on the drive only); catch/finish state machine; blade feather. |
 | 1.3.0 | Boat class 2x–8+; stroke-side / bow-side; overlay sign from “Stroke sits”. |
+| 1.4.0 | Honest Crew Clock: forward match; in-sync cannot score a single seat or a missing finish. |
+| 1.4.1 | 180° fan; thick per-seat colour bars with catch/finish numbers on the overlay. |
+| 1.4.2 | Catch late/early vs stroke on the live page; finish not required for that cue. |
+| 1.4.3 | Drive arc + blade metres; gated feather-on timing vs stroke after finish. |
+| 1.4.4 | Pages root is RowPod; IMU lab parked at `lab.html`. |
 
-Patches (1.0.x) are small detector/UI fixes. Minors (1.1, 1.2, 1.3) are
+Patches (1.0.x) are small detector/UI fixes. Minors (1.1–1.4) are
 behaviour a coach will notice. The PWA cache name and `?v=` query follow the
 same number so phones do not keep yesterday’s JavaScript.
 
@@ -351,13 +368,13 @@ Copy this; it is the same ladder the software is tested against.
 Canonical next-step brief (priority, non-negotiables, done-when tests):
 [`ROWPOD_NEXT.md`](ROWPOD_NEXT.md).
 
-**Human gate:** confirm 1.3.0 stroke-side / bow-side overlay on water before
-starting 1.4. Firmware major / v2 remains an owner decision; the next *host*
-minors do not require a flash.
+**Human gate:** 1.3 overlay confirmed on water. Host 1.4 matcher is in the
+tree; confirm on a new CSV (no 500 ms alias, empty `in_sync` without two
+finishes). Firmware major / v2 remains an owner decision.
 
 | Slice | Host | Coach question |
 |-------|------|----------------|
-| **A** | 1.4 Honest Crew Clock | Who is late vs stroke, and is the crew inside *my* window? Forward match; in-sync only with ≥2 complete seats and a trusted clock. |
+| **A** | 1.4 Honest Crew Clock **shipped** | Who is late vs stroke, and is the crew inside *my* window? Confirm on water CSV. |
 | **B** | 1.5 Feather + blade flags | Square before catch? Wash / lock-delay? Open blade vs short catch? After A. |
 | **C** | 1.6 CSV review | Who faded in the last third? Rolling in-sync. Relative drive-rate overlay. No watts. After A. |
 
@@ -384,6 +401,6 @@ project owner.
 | [`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md) | BLE versions, capture lifecycle, sample index. |
 | [`HYROX_TRAINING.md`](HYROX_TRAINING.md) | Body-worn training on the same pod. |
 | [`../README.md`](../README.md) | Build/flash, repo layout. |
-| [`../web/ble_plotter/README.md`](../web/ble_plotter/README.md) | Lab dashboard steps. |
+| [`../web/ble_plotter/README.md`](../web/ble_plotter/README.md) | RowPod serve URL; IMU lab is `lab.html`. |
 
 Firmware: ESP-IDF 6.x, target `esp32c3`, `idf.py build flash monitor`.

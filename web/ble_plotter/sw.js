@@ -1,5 +1,6 @@
-const CACHE = "rowpod-1.3.0";
+const CACHE = "rowpod-1.4.4";
 const ASSETS = [
+  "./index.html",
   "./rowpod.html",
   "./rowpod.js",
   "./rowpod.css",
@@ -10,6 +11,8 @@ const ASSETS = [
   "./timebase.js",
   "./rowing_angle.js",
   "./rowing_crew.js",
+  "./rowing_fan.js",
+  "./rowing_length.js",
   "./boat_rig.js",
   "./version.js",
   "./overtec-mark.svg",
