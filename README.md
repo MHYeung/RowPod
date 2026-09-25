@@ -16,8 +16,12 @@ magnetometer, CA-C03 chip antenna, and a local Web Bluetooth plotter.
 ```sh
 idf.py set-target esp32c3
 idf.py build
-idf.py -p COMx flash monitor
+idf.py -p <usb-serial-jtag-port> flash monitor
 ```
+
+Console is the C3 **USB Serial/JTAG** port
+(`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` in `sdkconfig.defaults`). A UART-only
+cable on GPIO20/21 will not show firmware logs.
 
 ## Web dashboard
 
@@ -93,6 +97,8 @@ browser dashboard and is not stored in pod flash.
 The session/status lifecycle and CSV provenance fields are documented in
 [docs/SESSION_PROTOCOL.md](docs/SESSION_PROTOCOL.md).
 
+On-device Mahony (fused BLE, Ki=0, mag stride):
+[docs/MAHONY_AHRS.md](docs/MAHONY_AHRS.md).
 For calibrated, quality-gated short arm-stroke capture and reconstruction, see
 [docs/TRAJECTORY_CAPTURE.md](docs/TRAJECTORY_CAPTURE.md).
 For station-aware training metrics, see

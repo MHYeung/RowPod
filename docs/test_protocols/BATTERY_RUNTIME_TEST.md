@@ -33,7 +33,7 @@ defined cutoff and recharge under supervision.
   meter is only useful if the product is deliberately powered through that USB
   path; it does not characterize normal LiPo discharge.
 - Stable room temperature; record it in the test notes.
-- Chrome or Edge running the dashboard v14 or newer.
+- Chrome or Edge running the IMU lab (`lab.html?v=16.8`).
 - A reliable charging supply and a timer.
 
 ## Test matrix
@@ -106,3 +106,9 @@ were capacity curves. The higher-load mode can show a lower voltage from
 internal resistance even at the same remaining charge. Use runtime and
 externally integrated current for power decisions; use the dashboard CSV to
 explain whether a runtime change coincides with BLE or sensor degradation.
+
+Firmware percent (`battery.c`) is a **loaded-voltage** piecewise map, not OCV
+SoC: 3.30 V → 0 %, 3.50 V → 10 %, 3.60 V → 25 %, 3.70 V → 45 %, 3.80 V → 60 %,
+3.90 V → 75 %, 4.00 V → 88 %, 4.10 V → 96 %, 4.20 V → 100 %. Linear 3.3–4.2 V
+made a rested ~3.9 V pack look emptier than it is. ADC is GPIO2 (ADC1 CH2),
+12 dB atten, 1:1 divider (`BOARD_BATTERY_DIVIDER_RATIO = 2`).

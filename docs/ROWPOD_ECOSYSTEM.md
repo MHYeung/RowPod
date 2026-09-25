@@ -399,6 +399,7 @@ project owner.
 | [`ROWPOD_NEXT.md`](ROWPOD_NEXT.md) | Next slices (1.4–1.6), gates, what not to build. |
 | [`DASHBOARD_PAGES.md`](DASHBOARD_PAGES.md) | Hosting the UI on GitHub Pages. |
 | [`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md) | BLE versions, capture lifecycle, sample index. |
+| [`MAHONY_AHRS.md`](MAHONY_AHRS.md) | On-device filter; why RowPod stays on v16 raw gyro. |
 | [`HYROX_TRAINING.md`](HYROX_TRAINING.md) | Body-worn training on the same pod. |
 | [`../README.md`](../README.md) | Build/flash, repo layout. |
 | [`../web/ble_plotter/README.md`](../web/ble_plotter/README.md) | RowPod serve URL; IMU lab is `lab.html`. |

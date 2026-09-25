@@ -28,19 +28,28 @@ rate mask, max batch frames, IMU/MAG ODRs, ATT MTU, and queue depth.
 - Capture at ≥224 Hz packs 4 fused frames (~112 notifies/s at 448 Hz) or 2 v16
   frames, and waits for `NOTIFY_TX` between batches
 
-### Configuration
+### Configuration (identity / rate / session)
 
-- `…2007` / `…2008` — legacy session command / status
-- `…2009` — capabilities
-- `…200a` — v16 session command:
-  `ver=2`, `command`, `rate_hz`, `flags`, `capture_id`, `command_id`
-- `…200b` — v16 session status (56 B): requested vs applied rate, error reason,
-  command id, 32-bit first/produced/sent/final sample indices, queue depth and
-  high-water mark, drop counters, ATT MTU, battery, mag rate
+| Char | Access | Wire |
+|------|--------|------|
+| `…2001` | read 4 B | `mode` (always `0`), `pod_id` LE `u16`, flags bit0 = custom name |
+| `…2002` | read/write UTF-8 | advertised / position name, ≤20 chars (`[A-Za-z0-9-_ ]`). Empty write restores `C3-T-XXXX` |
+| `…2003` | write/notify | software sync (see below) |
+| `…2004` | read 4 B | `u16 mV LE` + `u8 percent` + `u8 flags` (bit0 = valid) |
+| `…2005` | read/write 1 B | applied rate wire byte (`56`/`112`/`224`, or `255` → 448). Rejected while a capture is active if the rate would change |
+| `…2006` | read/write 1 B | workout profile (see below). Rejected while a capture is active |
+| `…2007` / `…2008` | write / read+notify | legacy 8 B session command / 36 B status |
+| `…2009` | read 20 B | capabilities |
+| `…200a` | write 12 B | v16 session: `ver=2`, `command`, `rate_hz`, `flags`, `capture_id`, `command_id` |
+| `…200b` | read+notify 56 B | requested vs applied rate, error reason, command id, 32-bit first/produced/sent/final sample indices, queue depth and high-water, drop counters, ATT MTU, battery, mag rate |
 
 Status flags include `has_samples`, `drain_done`, and `rate_applied`.
 Notifications are used when the negotiated ATT MTU can carry the full status;
 the read path remains canonical on small-MTU links.
+
+Default advertised name is `C3-T-XXXX` from the NVS pod id (BT MAC bytes 4–5).
+Dashboard rename writes `…2002` into NVS namespace `pod` and becomes the BLE
+local name. Motion UUIDs stay fixed.
 
 ## Capture lifecycle
 
@@ -77,6 +86,60 @@ Requested rate writes are applied asynchronously by the I2C-owning task.
 Supported sensor-native rates are 56, 112, 224, and 448 Hz. One-byte GATT
 rate fields cannot store 448, so that profile is encoded as wire value `255`
 (`rate_mask` bit 3). Hosts must decode `255 → 448` before computing `sample_ms`.
+
+Magnetometer ODR is paired in the I2C task (not independently writable):
+
+| IMU | Mag | Notes |
+|-----|-----|-------|
+| 56 Hz | 50 Hz | live monitor / RowPod |
+| 112 Hz | 100 Hz | multi-pod log |
+| 224 Hz | 200 Hz | high-rate |
+| 448 Hz | 100 Hz | ~10 ms heading correction; mag I2C is strided |
+
+On-device Mahony (`…1004`) consumes gyro and omits it from the notify. See
+[`MAHONY_AHRS.md`](MAHONY_AHRS.md).
+
+## Workout profile (`…2006`)
+
+One-byte read/write. Rejected while a capture is active.
+
+| Value | Name | Firmware rate side-effect |
+|-------|------|---------------------------|
+| 0 | general | 56 Hz live |
+| 1 | HYROX | requests 448 Hz capture policy; reps stay host-side |
+| 2 | rowing | stays 56 Hz so several oars can share one phone radio |
+
+RowPod writes `2` after connect. The lab HYROX tab writes `1`. Metrics and UI
+remain in the browser (`hyrox.js` / `rowing_angle.js`).
+
+## BLE link and notify batching
+
+On connect the pod:
+
+1. Requests a **7.5–15 ms** connection interval (up to three times if the host
+   settles slower than 15 ms). Latency 0; supervision timeout 4 s; CE length
+   long enough for a 2-frame notify.
+2. Requests DLE `251 / 2120 µs`.
+3. **Initiates ATT MTU exchange.** Windows/Chrome often never start it; default
+   ATT MTU 23 cannot carry a 22-byte v16 frame (`23 − 3 = 20`).
+4. `sdkconfig.defaults` prefers MTU 247; the central may still leave 23.
+
+Batching (`ble_tracker.c`):
+
+| Mode | Max frames / notify | Wait |
+|------|---------------------|------|
+| Live (typically 56 Hz) | up to 8, limited by `(ATT_MTU − 3) / frame_len` | next batch after `NOTIFY_TX` |
+| Capture ≥224 Hz, v16 | 2 | same |
+| Capture ≥224 Hz, fused | 4 (~112 notifies/s at 448 Hz) | same |
+
+Transport queue is 96 samples; overflow drops the oldest and increments
+`transport_dropped`. Advertising interval is 100 ms.
+
+ESP-IDF 6 NimBLE emits `BLE_GAP_EVENT_NOTIFY_TX` **synchronously** inside
+`ble_gatts_notify_custom` (“attempted”), unlike IDF 5 which deferred until the
+controller sent the PDU. Firmware must mark notify-inflight *before* that call;
+setting it after return deadlocks one notify and fills the 96-deep queue
+(browser sees a stale 0 Hz stream).
 
 ## CSV provenance
 

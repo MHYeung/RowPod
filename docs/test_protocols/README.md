@@ -10,6 +10,9 @@ Current protocols:
 - [V16 throughput / drain test](V16_THROUGHPUT_DRAIN_TEST.md) — long-capture
   sequencing, MTU preflight, and finalize-after-drain integrity.
 
+Related firmware notes: [`../MAHONY_AHRS.md`](../MAHONY_AHRS.md) (fused vs v16)
+and [`../SESSION_PROTOCOL.md`](../SESSION_PROTOCOL.md) (MTU, `NOTIFY_TX`, drain).
+
 ## What a dashboard status log can and cannot measure
 
 The Battery test dashboard tab records a low-rate snapshot for each connected

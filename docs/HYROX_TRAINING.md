@@ -51,7 +51,9 @@ Use the results to tune station thresholds and refractory times in
 `web/ble_plotter/hyrox.js`. Do not treat the default thresholds as medically
 or competitively validated.
 
-The firmware exposes a host-selected workout profile characteristic. Selecting
-HYROX requests the high-rate capture policy; the browser remains responsible
-for station state and rep estimation because it has the session context and
-can show uncertainty to the athlete.
+The firmware exposes a host-selected workout profile characteristic (`…2006`).
+Selecting HYROX (`1`) requests the 448 Hz capture policy; general (`0`) and
+rowing (`2`) stay at 56 Hz. The browser remains responsible for station state
+and rep estimation because it has the session context and can show uncertainty
+to the athlete. Profile writes are rejected while a capture is active
+([`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md)).

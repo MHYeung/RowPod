@@ -22,6 +22,8 @@ debugging hardware; the production app wires UI + sensors + BLE together.
 | IMU INT1 / INT2 | 8 / 3 |
 
 QMI8658A @ `0x6A` (WHO_AM_I `0x05`), QMC5883P @ `0x2C` (CHIPID `0x80`).
+I²C Fast-mode is 400 kHz (`BOARD_I2C_FREQ_HZ`). Pack voltage is ADC × 2
+(`BOARD_BATTERY_DIVIDER_RATIO`).
 
 ## Status LEDs
 
@@ -34,17 +36,55 @@ QMI8658A @ `0x6A` (WHO_AM_I `0x05`), QMC5883P @ `0x2C` (CHIPID `0x80`).
 
 ## Application flow (current)
 
-1. `device_config_init` — load name / pod id from NVS
-2. `ui_init` — LEDs + debounced button gesture task
-3. `sensor_stream_init` — I²C bus, IMU/mag init, INT2 DRDY task
-4. `ble_tracker_init` — NimBLE advertise motion + config services
-5. Client enables notifications on motion data → streaming starts
-6. Dashboard may write position name / request software sync
-7. Every pod advertises as a fixed single-node peripheral with a unique pod name
-8. The host may connect one or multiple pods using repeated **Add pod** actions
-9. No connection for three minutes → BLE stops and light sleep waits for GPIO10
-10. A short wake press is ignored; hold GPIO10 for 2 s, release, and advertising resumes
-11. In a connected pod, single-tap pauses/resumes the BLE sensor stream
+Matches `main/main.c`:
+
+1. `nvs_flash_init` + default event loop
+2. `device_config_init` — load name / pod id from NVS namespace `pod`
+3. `ui_init` — LEDs + debounced button gesture task
+4. `battery_init` — ADC oneshot on GPIO2 (pack = ADC × 2)
+5. `power_init` — three-minute disconnected idle → light sleep
+6. `sensor_stream_init` — I²C bus, IMU/mag init, INT2 DRDY task, Mahony
+7. `ble_tracker_set_link_cb(power_on_ble_link)` then `ble_tracker_init`
+8. Client enables notifications on **one** motion characteristic → streaming
+   (firmware prefers fused, then v16, then v1)
+9. Dashboard may write position name / workout profile / software sync
+10. Every pod advertises as a fixed single-node peripheral with a unique pod name
+11. The host may connect one or multiple pods using repeated **Add pod** actions
+12. No connection for three minutes → BLE stops and light sleep waits for GPIO10
+13. A short wake press is ignored; hold GPIO10 for 2 s, release, and advertising resumes
+14. In a connected pod, single-tap pauses/resumes the BLE sensor stream
+
+Console is the C3 **USB Serial/JTAG** port (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG`).
+Use `idf.py -p <port> flash monitor` on that interface, not a UART-only cable
+on GPIO20/21.
+
+Default name is `C3-T-XXXX` from the NVS pod id (BT MAC bytes 4–5). Custom
+names accept `[A-Za-z0-9-_ ]` only, max 20 chars. Empty write restores the
+default.
+
+## Power / light sleep
+
+`power.c` starts a one-shot 180 s idle timer. Connect stops it; disconnect
+resets it. `power_notify_activity` only matters while disconnected.
+
+On timeout the power task (not the timer callback) stops advertising, turns
+LEDs off, then `esp_light_sleep_start`. GPIO10 is configured for **low-level**
+GPIO wakeup. After the edge, firmware still requires a complete 2 s hold and
+release (`BOARD_BUTTON_LONG_PRESS_MS`) before BLE restarts. A short press
+re-enters light sleep immediately.
+
+Do not call `ble_tracker_*` or `esp_light_sleep_start` from the idle-timer
+callback — that path only `xTaskNotifyGive`s the power task.
+
+## I²C ownership
+
+One FreeRTOS task (`sensor_stream`) owns the bus. The INT2 ISR only
+`xTaskNotifyFromISR`; BLE callbacks only request rate/enable flags. Do not add
+I2C, Mahony, or blocking `ble_gatts_notify` on those paths.
+
+`i2c_bus_init` waits up to 500 ms for SDA/SCL idle-high, then enables the IDF
+master with internal pull-ups. Those internals are **not** a substitute for
+external 4.7 kΩ pull-ups; SCL (GPIO5 / TP5) must still idle near 3.3 V.
 
 ## Multi-pod validation checklist
 
@@ -63,7 +103,25 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/lab.html?v=16.8` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead. RowPod (rowing) is `http://localhost:8080/?v=1.4.4`.
+Open `http://localhost:8080/?v=1.4.4` (RowPod) or
+`http://localhost:8080/lab.html?v=16.8` (IMU lab) in Chrome/Edge (not
+`file://`). Hard-refresh if Add pod looks dead. The two hosts use **different**
+cache-bust tokens — see [`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md).
+
+## Developer pitfalls
+
+| Symptom | Likely cause |
+|---------|----------------|
+| `i2c_bus: not idle` at boot | Missing external pull-ups, solder bridge, or SCL stuck low |
+| WHO_AM_I / CHIPID fail | Bus not 400 kHz healthy; confirm 0x6A / 0x2C with a probe |
+| Connected but 0 Hz / queue high-water | ATT MTU still 23, or notify-inflight deadlock (see [`docs/SESSION_PROTOCOL.md`](docs/SESSION_PROTOCOL.md)) |
+| Oar catch walks toward iron | Host subscribed fused Mahony instead of v16 raw gyro |
+| Capture `FINALIZE` rejected | Drain not complete / queue not empty |
+| Light sleep never resumes BLE | Wake press shorter than 2 s; short GPIO wake is ignored |
+| Stale RowPod after a host bump | Hard-refresh `/?v=1.4.4`; delete the installed PWA (`rowpod-1.4.4`) |
+| Stale IMU lab after a lab JS change | Hard-refresh `lab.html?v=16.8` (lab has no service worker) |
+| `file://` Web Bluetooth | Serve `localhost` or the Pages HTTPS URL |
+| Monitor shows nothing | Wrong port; firmware uses USB Serial/JTAG |
 
 ## Known hardware notes
 
@@ -78,3 +136,5 @@ Open `http://localhost:8080/lab.html?v=16.8` in Chrome/Edge (not `file://`). Har
 - QMI8658A / QMC5883P datasheets (identity, output registers, scales)
 - Chrome Web Bluetooth secure context (`localhost` or HTTPS)
 - Software sync accuracy is visual/ms-scale only
+- On-device Mahony vs v16 raw gyro: [`docs/MAHONY_AHRS.md`](docs/MAHONY_AHRS.md)
+- BLE MTU / batching / IDF 6 `NOTIFY_TX`: [`docs/SESSION_PROTOCOL.md`](docs/SESSION_PROTOCOL.md)
