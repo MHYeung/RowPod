@@ -84,3 +84,6 @@ The QMI hardware FIFO is not enabled in this profile. Acquisition remains
 DRDY-clocked; the data-loss fix is the queued, MTU-aware BLE notification
 batcher. Hardware FIFO is a future option if on-device scheduling still causes
 loss after transport gaps have been removed.
+
+On-device Mahony (fused `…1004`, Ki=0, mag stride): [`MAHONY_AHRS.md`](MAHONY_AHRS.md).
+BLE MTU / IDF 6 `NOTIFY_TX`: [`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md).
