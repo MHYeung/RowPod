@@ -98,9 +98,13 @@ the same ODR and cancels in catch-to-catch deltas.
 The UI shows **clock ±rms ms** per seat. If that number is tens of milliseconds,
 do not trust a 40 ms in-sync call.
 
-Firmware v17 writes a 32-bit `sample_index` in bytes 16–19 of the sync
-response. Older pods wrote a 16-bit seq plus pad zeros; the decoder still
-accepts that until wrap (~20 min at 56 Hz).
+Current firmware writes a 32-bit `sample_index` in bytes 16–19 of the
+`…2003` sync response (`decodeSyncRsp` in `protocol.js`). Older images wrote
+a 16-bit seq plus two pad zeros; the decoder still accepts that until wrap
+(~20 min at 56 Hz). Workout profile `2` (rowing) is rejected by images that
+predate `…2006`; live 56 Hz still works without it. There is no separate
+firmware “v17” product line — `firmware_proto` in capabilities is `3` when
+fused frames exist (`SENSOR_PROTO_FORMAT_VER_FUSED`).
 
 ## Zeroing
 

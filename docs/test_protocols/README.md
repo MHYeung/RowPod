@@ -25,3 +25,20 @@ It does **not** measure current, consumed mAh, or open-circuit state-of-charge.
 Use an external current logger or power analyser for those measurements. Keep
 the dashboard tab visible throughout a browser-based test; background timer
 throttling is itself logged but invalidates precise sample timing.
+
+## Status CSV v3 columns
+
+`web/ble_plotter/status_log.js` (Battery test tab). Default interval 60 s,
+ring 20 000 rows. Header comments then:
+
+```
+created_iso,elapsed_s,device_id,pod_id,position,connection_state,
+sensor_state,health,expected_rate_hz,observed_rate_hz,sequence_gaps,missing_frames,
+outlier_rows,total_frames,battery_valid,battery_mV,battery_percent,
+battery_read_error,capture_id,firmware_state,rate_epoch,protocol_ver,first_sample,last_produced,
+last_sent,final_sample,has_samples,drain_done,queue_depth,queue_high_water,sensor_dropped,
+transport_dropped,notify_failures,att_mtu,browser_visibility,interval_s
+```
+
+This is not the motion CSV. Motion v7 + reconstruction gates:
+[`../TRAJECTORY_CAPTURE.md`](../TRAJECTORY_CAPTURE.md).

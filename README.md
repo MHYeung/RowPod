@@ -94,12 +94,29 @@ The session/status lifecycle and CSV provenance fields are documented in
 [docs/SESSION_PROTOCOL.md](docs/SESSION_PROTOCOL.md).
 
 For calibrated, quality-gated short arm-stroke capture and reconstruction, see
-[docs/TRAJECTORY_CAPTURE.md](docs/TRAJECTORY_CAPTURE.md).
+[docs/TRAJECTORY_CAPTURE.md](docs/TRAJECTORY_CAPTURE.md). Mag calibration is
+browser `localStorage` only; it stamps the CSV header and does not rewrite
+firmware Mahony or `mx_G` columns.
 For station-aware training metrics, see
 [docs/HYROX_TRAINING.md](docs/HYROX_TRAINING.md).
 For repeatable runtime and battery-power characterization, see
 [docs/test_protocols/BATTERY_RUNTIME_TEST.md](docs/test_protocols/BATTERY_RUNTIME_TEST.md).
 For v16 throughput / drain integrity, see
 [docs/test_protocols/V16_THROUGHPUT_DRAIN_TEST.md](docs/test_protocols/V16_THROUGHPUT_DRAIN_TEST.md).
+
+## Host tests (no hardware)
+
+```sh
+node web/ble_plotter/protocol.test.js
+node web/ble_plotter/rowing_angle.test.js
+python tools/reconstruct_trajectory.py --help
+```
+
+Python 3 stdlib only for the reconstruction tools. The IMU lab mag-cal /
+CSV v7 runbook is [docs/TRAJECTORY_CAPTURE.md](docs/TRAJECTORY_CAPTURE.md).
+
+The VS Code / Codespaces container (`.devcontainer/`) is `espressif/idf`
+with `--privileged` USB. `DOCKER_TAG` defaults to `latest`; pin **6.0.1**
+if the image drifts. Target remains `esp32c3`.
 
 See [BRINGUP.md](BRINGUP.md) for staged hardware bring-up notes.
