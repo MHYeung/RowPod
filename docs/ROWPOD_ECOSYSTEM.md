@@ -212,7 +212,7 @@ HYROX.
 | **Summary** | Battery, rate, gaps, stream health — “is this pod actually on?” |
 | **Plots** | Accel / gyro / mag overlay — mount check, clipping, magnetic corruption. |
 | **Orientation cube** | On-device Mahony attitude — useful on a bench, **not** the oar angle. |
-| **CSV log** | Full motion capture with session lifecycle (prepare / start / drain). |
+| **CSV log** | Full motion capture with session lifecycle (prepare / start / drain). Mag-cal is lab `localStorage` only (header stamp, not firmware). |
 | **HYROX tab** | Candidate reps and work/rest on body-worn pods. Station estimates are **not** official timing. |
 | **Battery test** | Endurance characterisation of the pack. |
 | **Button** | Connected: tap pauses/resumes streaming. Sleep: ~2 s hold to wake. |
@@ -398,7 +398,8 @@ project owner.
 |-----|------|
 | [`ROWPOD_NEXT.md`](ROWPOD_NEXT.md) | Next slices (1.4–1.6), gates, what not to build. |
 | [`DASHBOARD_PAGES.md`](DASHBOARD_PAGES.md) | Hosting the UI on GitHub Pages. |
-| [`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md) | BLE versions, capture lifecycle, sample index. |
+| [`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md) | BLE versions, capture lifecycle, sample index, CSV v7 columns. |
+| [`TRAJECTORY_CAPTURE.md`](TRAJECTORY_CAPTURE.md) | Mag-cal gates, lab CSV v7, reconstruction CLI. |
 | [`HYROX_TRAINING.md`](HYROX_TRAINING.md) | Body-worn training on the same pod. |
 | [`../README.md`](../README.md) | Build/flash, repo layout. |
 | [`../web/ble_plotter/README.md`](../web/ble_plotter/README.md) | RowPod serve URL; IMU lab is `lab.html`. |

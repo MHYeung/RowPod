@@ -84,6 +84,14 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
   phase lock. RowPod stamps samples from a fitted `sample_index → host ms`
   model (see `docs/ROWING_SYNC.md`).
 
+## Mag calibration (IMU lab)
+
+**Calibrate mag (30 s)** writes `c3_mag_calibration_v1` in `localStorage`
+(offset + per-axis scale). Finish needs ≥400 samples and ≥0.12 G half-range
+on X, Y, and Z. It does not change firmware Mahony. CSV v7 rows stay
+uncalibrated; the header `# podN_mag_cal=` is the reconstruction quality
+gate. Full runbook: [`docs/TRAJECTORY_CAPTURE.md`](../../docs/TRAJECTORY_CAPTURE.md).
+
 ## Limits
 
 - One browser gesture per newly permitted pod.

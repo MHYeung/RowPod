@@ -80,13 +80,32 @@ rate fields cannot store 448, so that profile is encoded as wire value `255`
 
 ## CSV provenance
 
-CSV v7 logs on-device Mahony `qw,qx,qy,qz`, body accel, and the mag vector the
-filter consumed. `sample_index`, `missing_frames`, `gap_events`, and the three
-device drop counters remain for integrity. Raw, clean, cal, reconstructed gyro,
-and per-row session snapshots were dropped; those belong in status CSV or
-headers. `arrival_ms` remains useful for browser-latency diagnostics;
-`sample_ms` is derived from `sample_index` and the rate epoch. v6 files still
-reconstruct via host AHRS when gyro columns are present.
+CSV v7 (IMU lab `csv_log.js`) is comment-meta then one header row:
+
+```
+position,device_id,pod_id,rate_hz,sample_index,sample_ms,arrival_ms,
+capture_phase,stationary,qw,qx,qy,qz,ax_g,ay_g,az_g,mx_G,my_G,mz_G,
+missing_frames,gap_events,sensor_dropped,transport_dropped,notify_failures
+```
+
+- `qw..qz` — on-device Mahony (empty if the host never subscribed fused).
+- `ax..az` — body accel in g; `mx..mz` — mag in gauss **as streamed**. Host
+  mag-cal lives in the `# podN_mag_cal=` header only; it does not rewrite
+  those columns or the firmware filter.
+- `sample_ms` — `(sample_index − first) × 1000 / rate_hz`.
+- `arrival_ms` — browser ms since Start (notify jitter, not IMU phase).
+- `stationary` — `abs(|accel| − 1) ≤ 0.08 g` (accel only; fused omits gyro).
+- Integrity: host `missing_frames` / `gap_events`; device drop counters are
+  snapshots copied onto each motion row.
+
+Raw, clean, cal, reconstructed gyro, and per-row session snapshots were
+dropped from v7. Ring capacity is 120 000 rows. v6 files still reconstruct via
+host AHRS when gyro columns are present.
+
+Status / endurance CSV v3 (`status_log.js`) is a low-rate snapshot (default
+60 s), not a motion log. See [`test_protocols/README.md`](test_protocols/README.md).
+Capture workflow and reconstruction gates:
+[`TRAJECTORY_CAPTURE.md`](TRAJECTORY_CAPTURE.md).
 
 ## Software sync (`…2003`)
 

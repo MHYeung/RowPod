@@ -34,8 +34,12 @@ station-specific validation. The HYROX tab lives on the IMU lab
 4. Perform the set. The dashboard shows elapsed time, work time, candidate
    reps, cadence, and effort.
 5. Stop and remain still for the closing bias period.
-6. Download the CSV. It includes the selected profile, station, candidate rep
-   count, outlier flags, and cleaned engineering columns.
+6. Download the motion CSV v7. Header stamps `# training_profile=1` and
+   `station=…`. Rows are the same Mahony + accel + mag columns as a lab
+   capture (no cleaned gyro, no per-row outlier flags). Candidate reps live
+   on the HYROX tab and in your notes; reconstruction is the
+   [`TRAJECTORY_CAPTURE.md`](TRAJECTORY_CAPTURE.md) pipeline if you need
+   relative 3D shape.
 
 ## Validate before using for training decisions
 
