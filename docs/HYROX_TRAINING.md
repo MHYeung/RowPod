@@ -55,3 +55,27 @@ The firmware exposes a host-selected workout profile characteristic. Selecting
 HYROX requests the high-rate capture policy; the browser remains responsible
 for station state and rep estimation because it has the session context and
 can show uncertainty to the athlete.
+
+## Default station knobs (`hyrox.js`)
+
+Signal (0–1.5):
+
+`clamp((‖gyro_dps‖ / 180 + |‖accel_g‖ − 1| / 0.6) / 2)`
+
+A candidate rep is a rising edge through `threshold` after `refractoryMs`.
+`rep: false` stations only accumulate work time.
+
+| Key | Label | Rep? | Threshold | Refractory |
+|-----|-------|------|-----------|------------|
+| `run` | Run | no | 0.55 | 0 |
+| `ski` | SkiErg | yes | 0.75 | 450 ms |
+| `sled_push` | Sled push | no | 0.65 | 0 |
+| `sled_pull` | Sled pull | yes | 0.75 | 500 ms |
+| `burpee` | Burpee broad jump | yes | 0.80 | 900 ms |
+| `row` | Row | yes | 0.65 | 650 ms |
+| `carry` | Farmers carry | no | 0.45 | 0 |
+| `lunge` | Sandbag lunges | yes | 0.60 | 650 ms |
+| `wall_ball` | Wall balls | yes | 0.65 | 550 ms |
+
+Capture plumbing (448/112 Hz, same v7 logger, header `training_profile` /
+`station`): [`LAB_DASHBOARD.md`](LAB_DASHBOARD.md).

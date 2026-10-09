@@ -95,6 +95,10 @@ The session/status lifecycle and CSV provenance fields are documented in
 
 For calibrated, quality-gated short arm-stroke capture and reconstruction, see
 [docs/TRAJECTORY_CAPTURE.md](docs/TRAJECTORY_CAPTURE.md).
+IMU / mag / DRDY sampling (I2C owner, ODR pairing, `ADDR_AI`):
+[docs/SENSOR_SAMPLING.md](docs/SENSOR_SAMPLING.md).
+IMU lab host (capture flow, caches, HYROX knobs):
+[docs/LAB_DASHBOARD.md](docs/LAB_DASHBOARD.md).
 For station-aware training metrics, see
 [docs/HYROX_TRAINING.md](docs/HYROX_TRAINING.md).
 For repeatable runtime and battery-power characterization, see
