@@ -78,3 +78,5 @@ Open `http://localhost:8080/lab.html?v=16.8` in Chrome/Edge (not `file://`). Har
 - QMI8658A / QMC5883P datasheets (identity, output registers, scales)
 - Chrome Web Bluetooth secure context (`localhost` or HTTPS)
 - Software sync accuracy is visual/ms-scale only
+- IMU/mag/DRDY sampling: [docs/SENSOR_SAMPLING.md](docs/SENSOR_SAMPLING.md)
+- IMU lab host: [docs/LAB_DASHBOARD.md](docs/LAB_DASHBOARD.md)

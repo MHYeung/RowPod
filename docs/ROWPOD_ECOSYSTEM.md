@@ -402,5 +402,7 @@ project owner.
 | [`HYROX_TRAINING.md`](HYROX_TRAINING.md) | Body-worn training on the same pod. |
 | [`../README.md`](../README.md) | Build/flash, repo layout. |
 | [`../web/ble_plotter/README.md`](../web/ble_plotter/README.md) | RowPod serve URL; IMU lab is `lab.html`. |
+| [`LAB_DASHBOARD.md`](LAB_DASHBOARD.md) | Lab capture flow, caches, HYROX knobs. |
+| [`SENSOR_SAMPLING.md`](SENSOR_SAMPLING.md) | I2C owner, IMU/mag ODR, INT2 DRDY. |
 
 Firmware: ESP-IDF 6.x, target `esp32c3`, `idf.py build flash monitor`.

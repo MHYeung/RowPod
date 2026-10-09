@@ -49,6 +49,10 @@ Bring-up, overlay plots, orientation cube, HYROX, Mahony CSV, battery log:
 **http://localhost:8080/lab.html?v=16.8**
 
 That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
+Lab architecture, capture sequence, and station defaults:
+[`docs/LAB_DASHBOARD.md`](../../docs/LAB_DASHBOARD.md).
+IMU / mag / DRDY sampling:
+[`docs/SENSOR_SAMPLING.md`](../../docs/SENSOR_SAMPLING.md).
 
 ## Protocol
 
