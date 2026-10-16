@@ -117,9 +117,74 @@ accepts that until wrap (~20 min at 56 Hz).
    so the fan overlays instead of mirroring.
 
 Re-zero if a pod is remounted or the piece is long enough that residual gyro
-bias (clamped to ±5 deg/s, estimated from catch-to-catch walk) has eaten the
-absolute scale. Arc length (finish − catch) is robust to a slow walk; the
-absolute catch number is not.
+bias has eaten the absolute scale. There is **no** ±5 deg/s ω clamp in the
+host (`snapshot().omegaBias` is always 0). Walk is pulled back by the
+stroke-midpoint DC lock below. Arc length (finish − catch) is robust to a
+slow walk; the absolute catch number is not.
+
+## Host detector and matcher knobs
+
+These live in the browser. Changing them does **not** require a firmware
+flash. Values are the **1.4.4** defaults from source, not coaching targets.
+
+### Catch / finish (`rowing_angle.js`)
+
+A catch is an ω_vert up-cross through 0; a finish is a down-cross. Both must
+pass the peak-ω and refractory gates. Finish also needs enough arc vs the
+open catch.
+
+| Knob | Default | If you miss it |
+|------|---------|----------------|
+| `omegaPeakMin` | 25 deg/s | Slow / tiny rocks never fire. Bench stick must be a firm stroke. |
+| `minArcDeg` | 20° | Finish dropped when \|θ_finish − θ_catch\| < 20°. CSV arcs stay around 23°. |
+| `refractoryMs` | 350 ms | Extra zero-crossings inside 350 ms are ignored. |
+| Finish timeout | 2500 ms | No finish for 2.5 s → next catch is accepted (expect resets). |
+| Gravity LP τ | 0.35 s | Low-pass on accel used as `ĝ` for `ω · ĝ`. |
+| DC leak τ | 0.45 s | `_dc` moves toward the midpoint target **only while ω_vert > 0**. |
+| `DC_ALPHA` | 0.85 | Fraction of (this stroke’s midpoint − first-stroke midpoint) applied to `_dcTarget` at finish. |
+| Sample `dt` | 0.1 ms … 150 ms | Wider BLE gaps skip integration for that interval. |
+| gyro lock | \|midpoint walk\| < 8° after ≥ 3 complete strokes | Chip stays **gyro settling** until then. |
+
+### Feather (`rowing_angle.js`)
+
+| Knob | Default | Notes |
+|------|---------|-------|
+| Shaft axis at Zero | body axis with smallest \|g\| | Two similarly horizontal axes stay ambiguous until host 1.5. |
+| Feather-on | first \|feather\| up-cross through **45°** after finish | Squared-only pieces never fire. |
+| Fan leak | Pearson \|r\| > 0.7, or feather range > 0.45 × θ range, over a drive | Chip **feather?**; Δt blank. Needs two drives to decide. |
+
+### Crew match (`rowing_crew.js`)
+
+Forward from the **reference seat’s catch**. Nearest-in-half-period pairing
+is what produced 500–700 ms “crew” spreads.
+
+| Knob | Default | Notes |
+|------|---------|-------|
+| Early slack | 80 ms | Other seat may catch this early vs stroke. |
+| Late cap | `min(350 ms, 0.32 × period)` | Later than this is the *next* stroke, not a late crew. Period falls back to 2000 ms until two reference catches exist. |
+| Drive window | clamp `0.7 × period` to 900–2200 ms | Finish must land in this window after that seat’s catch. |
+| Recovery window | clamp `0.45 × period` to 400–1200 ms | Feather-on search after finish (plus 80 ms slack to the next catch). |
+| In-sync window | 40 ms (coach 10–80) | Rated only when ≥ 2 seats have catch **and** finish **and** clock rms ≤ 15 ms. |
+| Wide spread | 200 ms | Live cue **not this stroke**; CSV `match_quality=wide_spread`. |
+| Untrusted clock | rms > 15 ms | `in_sync` empty; CSV `clock_status=UNTRUSTED_TIME`. |
+
+Sampled-crew presets (`boat_rig.js`) filter which connected seats enter the
+matcher (`All` / pair / stroke+3+bow / stroke+4+2). They do not add radios.
+
+### Timebase (`timebase.js`, `pod_registry.js`)
+
+Handshake every **4 s**. Weighted fit `hostMs = a * sampleIndex + b` (`1/rtt`),
+last **16** points, drop RTT **> 80 ms**. Fitted slope must stay within
+**2×** of the nominal 56 Hz period; otherwise the host keeps the nominal
+slope and the latest intercept. Until the first accepted sync,
+`hostMsFromSample` is null and catch times are not trustworthy.
+
+### Default spans (`rowing_length.js`)
+
+Until the coach types centimetres: sweep inboard/outboard **1.15 / 2.61 m**,
+scull **0.88 / 2.00 m**. `blade_arc_m` uses **outboard** only. The UI inputs
+clamp inboard to 50–200 cm and outboard to 100–400 cm; `spanCmToM` also
+rejects ≤ 0 or > 800 cm.
 
 ## Accuracy budget (honest)
 
