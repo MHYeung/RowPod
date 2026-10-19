@@ -23,6 +23,8 @@ rate mask, max batch frames, IMU/MAG ODRs, ATT MTU, and queue depth.
 - `9b7e1001-…` — legacy notify/read, 20-byte frames (batched by MTU)
 - `9b7e1003-…` — v16 notify/read, 22-byte frames (batched by MTU)
 - `9b7e1004-…` — fused notify/read, 24-byte frames (Q15 quaternion + accel + mag)
+- `9b7e1005-…` — coach summary notify/read, 20 bytes, one packet per finished stroke (not batched). Layout is in the speed-coach `docs/ble_sensors.md`. Capability bit `0x40`
+- `9b7e200c-…` — coach control write: zero / set side / clear. The phone app does not use it
 - When more than one motion CCCD is enabled, firmware prefers fused, then v16,
   then v1, so radio load is not doubled
 - Capture at ≥224 Hz packs 4 fused frames (~112 notifies/s at 448 Hz) or 2 v16

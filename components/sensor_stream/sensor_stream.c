@@ -1,3 +1,5 @@
+#include "device_config.h"
+#include "rowing_metrics.h"
 #include "sensor_stream.h"
 
 #include <inttypes.h>
@@ -254,6 +256,19 @@ static void stream_task(void *arg)
 
 esp_err_t sensor_stream_init(void)
 {
+    rowing_calib_t cal = {.sign = 1, .shaft_axis = 2};
+    int8_t sign = 1;
+    bool zeroed = false;
+    uint8_t axis = 2;
+    int16_t feather = 0;
+    rowing_metrics_init();
+    if (device_config_get_oar(&sign, &zeroed, &axis, &feather) == ESP_OK) {
+        cal.sign = sign;
+        cal.zeroed = zeroed;
+        cal.shaft_axis = axis;
+        cal.feather_ddeg = feather;
+        rowing_metrics_restore(&cal);
+    }
     ESP_RETURN_ON_ERROR(init_drdy_gpio(), TAG, "DRDY GPIO");
     ESP_RETURN_ON_ERROR(i2c_bus_init(), TAG, "i2c");
     ESP_RETURN_ON_ERROR(qmi8658_init(), TAG, "imu");

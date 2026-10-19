@@ -59,6 +59,7 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 - Notify `…1003`: one or more packed 22-byte LE frames (`sample_index + 9×int16`) — v16
 - Read `…1002`: scale metadata (`flags` bit0 = multi mode)
 - RowPod and the IMU lab prefer `…1003` when capabilities advertise it
+- Notify `…1005`: 20-byte coach summary, one packet per finished stroke. The phone app does not subscribe. Capability flag `0x40` on `…2009` means it is present. The speed coach uses it instead of the raw stream
 
 ### Configuration / sync
 
@@ -75,6 +76,7 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 - Write `…200a`: v16 12-byte session command with command id
 - Read/Notify `…200b`: v16 56-byte status with applied rate, drain barrier,
   32-bit sample boundaries, and queue high-water
+- Write `…200c`: speed-coach control. `1` zero, `2` + side byte (`0` stroke, `1` bow), `3` clear the in-progress stroke
 
 ### Rates
 

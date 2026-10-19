@@ -18,6 +18,10 @@ static uint16_t s_pod_id;
 static char s_custom_name[DEVICE_CONFIG_NAME_MAX + 1];
 static bool s_has_custom_name;
 static bool s_ready;
+static int8_t s_oar_sign = 1;
+static bool s_oar_zeroed;
+static uint8_t s_oar_axis = 2;
+static int16_t s_oar_feather;
 
 static bool name_char_ok(char c)
 {
@@ -107,7 +111,19 @@ esp_err_t device_config_init(void)
         s_custom_name[0] = '\0';
         s_has_custom_name = false;
     }
+    int8_t sign = 1;
+    uint8_t axis = 2;
+    uint8_t zeroed = 0;
+    int16_t feather = 0;
+    (void)nvs_get_i8(h, "oar_sign", &sign);
+    (void)nvs_get_u8(h, "oar_axis", &axis);
+    (void)nvs_get_u8(h, "oar_zero", &zeroed);
+    (void)nvs_get_i16(h, "oar_fref", &feather);
     nvs_close(h);
+    s_oar_sign = (sign < 0) ? -1 : 1;
+    s_oar_axis = (axis > 2) ? 2 : axis;
+    s_oar_zeroed = (zeroed != 0);
+    s_oar_feather = feather;
 
     s_ready = true;
     ESP_LOGI(TAG, "fixed single-node pod_id=0x%04X custom=%s",
@@ -160,4 +176,48 @@ esp_err_t device_config_set_name(const char *name)
     s_has_custom_name = true;
     ESP_LOGI(TAG, "custom name=\"%s\"", s_custom_name);
     return persist();
+}
+
+esp_err_t device_config_get_oar(int8_t *sign, bool *zeroed, uint8_t *axis,
+                                int16_t *feather_ddeg)
+{
+    if (sign) {
+        *sign = s_oar_sign;
+    }
+    if (zeroed) {
+        *zeroed = s_oar_zeroed;
+    }
+    if (axis) {
+        *axis = s_oar_axis;
+    }
+    if (feather_ddeg) {
+        *feather_ddeg = s_oar_feather;
+    }
+    return ESP_OK;
+}
+
+esp_err_t device_config_set_oar(int8_t sign, bool zeroed, uint8_t axis,
+                                int16_t feather_ddeg)
+{
+    s_oar_sign = (sign < 0) ? -1 : 1;
+    s_oar_zeroed = zeroed;
+    s_oar_axis = (axis > 2) ? 2 : axis;
+    s_oar_feather = feather_ddeg;
+    nvs_handle_t h;
+    ESP_RETURN_ON_ERROR(nvs_open(NVS_NS, NVS_READWRITE, &h), TAG, "nvs open");
+    esp_err_t err = nvs_set_i8(h, "oar_sign", s_oar_sign);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(h, "oar_axis", s_oar_axis);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(h, "oar_zero", s_oar_zeroed ? 1 : 0);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_i16(h, "oar_fref", s_oar_feather);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
 }

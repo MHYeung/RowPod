@@ -46,6 +46,12 @@ bool device_config_has_custom_name(void);
  */
 esp_err_t device_config_set_name(const char *name);
 
+/** Oar side and zero, shared with the speed-coach control characteristic. */
+esp_err_t device_config_get_oar(int8_t *sign, bool *zeroed, uint8_t *axis,
+                                int16_t *feather_ddeg);
+esp_err_t device_config_set_oar(int8_t sign, bool zeroed, uint8_t axis,
+                                int16_t feather_ddeg);
+
 #ifdef __cplusplus
 }
 #endif

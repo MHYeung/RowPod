@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -18,6 +19,7 @@
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
+#include "rowing_metrics.h"
 #include "sensor_protocol.h"
 #include "sensor_stream.h"
 #include "services/gap/ble_svc_gap.h"
@@ -41,6 +43,9 @@ static const ble_uuid128_t uuid_motion_data_v16 =
 static const ble_uuid128_t uuid_motion_data_fused =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
                      0x71, 0x4f, 0x2f, 0x2b, 0x04, 0x10, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_motion_summary =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x05, 0x10, 0x7e, 0x9b);
 
 static const ble_uuid128_t uuid_cfg_svc =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
@@ -78,12 +83,19 @@ static const ble_uuid128_t uuid_cfg_session_v16 =
 static const ble_uuid128_t uuid_cfg_status_v16 =
     BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
                      0x71, 0x4f, 0x2f, 0x2b, 0x0b, 0x20, 0x7e, 0x9b);
+static const ble_uuid128_t uuid_cfg_coach =
+    BLE_UUID128_INIT(0x00, 0x4f, 0xd5, 0xe6, 0xb2, 0x4b, 0x86, 0x9b,
+                     0x71, 0x4f, 0x2f, 0x2b, 0x0c, 0x20, 0x7e, 0x9b);
 
 static uint8_t s_own_addr_type;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_data_val_handle;
 static uint16_t s_data_v16_val_handle;
 static uint16_t s_data_fused_val_handle;
+static uint16_t s_summary_val_handle;
+static uint16_t s_coach_val_handle;
+static bool s_summary_subscribed;
+static uint8_t s_summary[SENSOR_PROTO_SUMMARY_LEN];
 static uint16_t s_meta_val_handle;
 static uint16_t s_info_val_handle;
 static uint16_t s_name_val_handle;
@@ -163,6 +175,11 @@ static bool session_capture_active(void);
 
 static void request_fast_conn_params(void)
 {
+    /* A speed coach that only subscribed the per-stroke summary wants a slow
+     * interval. Pushing 7.5 ms here would undo that and drain the pod. */
+    if (!s_motion_subscribed && !s_motion_v16_subscribed && !s_motion_fused_subscribed) {
+        return;
+    }
     if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
         return;
     }
@@ -221,9 +238,10 @@ static void set_ui_state(ui_state_t state)
 
 static void apply_stream_state(void)
 {
-    bool subscribed = motion_any_subscribed();
-    s_notify_enabled = subscribed && s_stream_requested;
-    sensor_stream_set_enabled(s_notify_enabled);
+    bool motion = motion_any_subscribed();
+    bool coach = s_summary_subscribed && s_stream_requested;
+    s_notify_enabled = motion && s_stream_requested;
+    sensor_stream_set_enabled(s_notify_enabled || coach);
     if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         set_ui_state(s_notify_enabled ? UI_STATE_STREAMING
                                       : UI_STATE_CONNECTED);
@@ -316,7 +334,8 @@ static void fill_caps(sensor_proto_caps_t *caps)
     caps->feature_flags =
         SENSOR_PROTO_CAP_FLAG_V1_FRAME | SENSOR_PROTO_CAP_FLAG_V16_FRAME |
         SENSOR_PROTO_CAP_FLAG_DRAIN_BARRIER | SENSOR_PROTO_CAP_FLAG_APPLIED_RATE |
-        SENSOR_PROTO_CAP_FLAG_32BIT_SEQ | SENSOR_PROTO_CAP_FLAG_FUSED_FRAME;
+        SENSOR_PROTO_CAP_FLAG_32BIT_SEQ | SENSOR_PROTO_CAP_FLAG_FUSED_FRAME |
+        SENSOR_PROTO_CAP_FLAG_COACH_SUMMARY;
     caps->rate_mask = SENSOR_PROTO_RATE_MASK_56 | SENSOR_PROTO_RATE_MASK_112 |
                       SENSOR_PROTO_RATE_MASK_224 | SENSOR_PROTO_RATE_MASK_448;
     caps->max_batch_frames = BATCH_MAX_FRAMES;
@@ -527,6 +546,10 @@ static int motion_access(uint16_t conn_handle, uint16_t attr_handle,
         return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0
                    ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
+    if (attr_handle == s_summary_val_handle) {
+        return os_mbuf_append(ctxt->om, s_summary, sizeof(s_summary)) == 0
+                   ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
     return BLE_ATT_ERR_UNLIKELY;
 }
 
@@ -630,6 +653,33 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
 {
     (void)conn_handle;
     (void)arg;
+
+    if (attr_handle == s_coach_val_handle) {
+        if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        uint8_t buf[2] = {0};
+        uint16_t n = OS_MBUF_PKTLEN(ctxt->om);
+        if (n < 1 || n > sizeof(buf)) {
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        if (ble_hs_mbuf_to_flat(ctxt->om, buf, n, NULL) != 0) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        rowing_calib_t cal;
+        if (buf[0] == SENSOR_PROTO_COACH_ZERO) {
+            rowing_metrics_zero();
+        } else if (buf[0] == SENSOR_PROTO_COACH_SET_SIGN && n >= 2) {
+            rowing_metrics_set_sign(buf[1] == SENSOR_PROTO_COACH_SIDE_BOW ? -1 : 1);
+        } else if (buf[0] == SENSOR_PROTO_COACH_CLEAR) {
+            rowing_metrics_clear();
+        } else {
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        rowing_metrics_get_calib(&cal);
+        (void)device_config_set_oar(cal.sign, cal.zeroed, cal.shaft_axis, cal.feather_ddeg);
+        return 0;
+    }
 
     if (attr_handle == s_info_val_handle) {
         if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) {
@@ -910,6 +960,12 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_data_fused_val_handle,
             },
+            {
+                .uuid = &uuid_motion_summary.u,
+                .access_cb = motion_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_summary_val_handle,
+            },
             { 0 },
         },
     },
@@ -986,6 +1042,12 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .access_cb = cfg_access,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_status_v16_val_handle,
+            },
+            {
+                .uuid = &uuid_cfg_coach.u,
+                .access_cb = cfg_access,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .val_handle = &s_coach_val_handle,
             },
             { 0 },
         },
@@ -1156,9 +1218,95 @@ static void notify_ev_cb(struct ble_npl_event *ev)
     }
 }
 
+static int16_t deg_to_ddeg(float deg)
+{
+    float v = deg * 10.0f;
+    if (v > 32767.0f) {
+        v = 32767.0f;
+    }
+    if (v < -32768.0f) {
+        v = -32768.0f;
+    }
+    return (int16_t)lroundf(v);
+}
+
+static void on_stroke(const rowing_stroke_t *stroke)
+{
+    if (!stroke) {
+        return;
+    }
+    sensor_proto_summary_t pkt = {0};
+    pkt.ver = SENSOR_PROTO_SUMMARY_VER;
+    pkt.flags = SENSOR_PROTO_SUMMARY_FLAG_VALID;
+    if (stroke->zeroed) {
+        pkt.flags |= SENSOR_PROTO_SUMMARY_FLAG_ZEROED;
+    }
+    if (stroke->feather_trusted) {
+        pkt.flags |= SENSOR_PROTO_SUMMARY_FLAG_FEATHER;
+    }
+    pkt.stroke_idx = stroke->stroke_idx;
+    pkt.sample_index = stroke->sample_index;
+    pkt.catch_ddeg = deg_to_ddeg(stroke->catch_deg);
+    pkt.finish_ddeg = deg_to_ddeg(stroke->finish_deg);
+    float arc = fabsf(stroke->arc_deg) * 10.0f;
+    if (arc > 65535.0f) {
+        arc = 65535.0f;
+    }
+    pkt.arc_ddeg = (uint16_t)lroundf(arc);
+    float spm = stroke->spm * 10.0f;
+    if (spm < 0.0f) {
+        spm = 0.0f;
+    }
+    if (spm > 65535.0f) {
+        spm = 65535.0f;
+    }
+    pkt.spm_x10 = (uint16_t)lroundf(spm);
+    pkt.drive_ms = stroke->drive_ms;
+    uint16_t mv = 0;
+    uint8_t pct = 255;
+    if (battery_read(&mv, &pct) != ESP_OK) {
+        pct = 255;
+    }
+    pkt.batt_pct = pct;
+    memcpy(s_summary, &pkt, sizeof(pkt));
+    if (!s_summary_subscribed || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(s_summary, sizeof(s_summary));
+    if (!om) {
+        return;
+    }
+    int rc = ble_gatts_notify_custom(s_conn_handle, s_summary_val_handle, om);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "summary notify rc=%d", rc);
+    }
+}
+
+static void feed_rowing(const sensor_proto_sample_t *sample)
+{
+    uint16_t rate = sensor_stream_get_applied_rate_hz();
+    if (rate == 0 || rate > SENSOR_PROTO_RATE_LOG_HZ) {
+        return;
+    }
+    sensor_proto_meta_t meta = {0};
+    if (sensor_stream_get_meta(&meta) != ESP_OK ||
+        meta.accel_lsb_per_g == 0 || meta.gyro_lsb_per_dps == 0) {
+        return;
+    }
+    float ax = (float)sample->ax / (float)meta.accel_lsb_per_g;
+    float ay = (float)sample->ay / (float)meta.accel_lsb_per_g;
+    float az = (float)sample->az / (float)meta.accel_lsb_per_g;
+    float gx = (float)sample->gx / (float)meta.gyro_lsb_per_dps;
+    float gy = (float)sample->gy / (float)meta.gyro_lsb_per_dps;
+    float gz = (float)sample->gz / (float)meta.gyro_lsb_per_dps;
+    uint32_t t_ms = (uint32_t)(((uint64_t)sample->sample_index * 1000ull) / rate);
+    rowing_metrics_push(sample->sample_index, ax, ay, az, gx, gy, gz, t_ms, NULL);
+}
+
 static void on_sample(const sensor_proto_sample_t *sample, void *ctx)
 {
     (void)ctx;
+    feed_rowing(sample);
     if (session_accepts_samples()) {
         if (!s_session_first_valid) {
             s_session_first_sample = sample->sample_index;
@@ -1248,6 +1396,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             s_motion_subscribed = false;
             s_motion_v16_subscribed = false;
             s_motion_fused_subscribed = false;
+            s_summary_subscribed = false;
             s_stream_requested = true;
             s_notify_enabled = false;
             s_session_state = SENSOR_PROTO_STATE_IDLE;
@@ -1280,6 +1429,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         s_motion_subscribed = false;
         s_motion_v16_subscribed = false;
         s_motion_fused_subscribed = false;
+        s_summary_subscribed = false;
         s_stream_requested = true;
         s_notify_enabled = false;
         s_session_state = SENSOR_PROTO_STATE_IDLE;
@@ -1303,6 +1453,9 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                 frame_queue_reset();
             }
             apply_stream_state();
+            if (event->subscribe.cur_notify) {
+                request_fast_conn_params();
+            }
             notify_session_status();
         } else if (event->subscribe.attr_handle == s_data_v16_val_handle) {
             s_motion_v16_subscribed = event->subscribe.cur_notify;
@@ -1313,6 +1466,9 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                 frame_queue_reset();
             }
             apply_stream_state();
+            if (event->subscribe.cur_notify) {
+                request_fast_conn_params();
+            }
             notify_session_status();
         } else if (event->subscribe.attr_handle == s_data_fused_val_handle) {
             s_motion_fused_subscribed = event->subscribe.cur_notify;
@@ -1323,7 +1479,18 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                 frame_queue_reset();
             }
             apply_stream_state();
+            if (event->subscribe.cur_notify) {
+                request_fast_conn_params();
+            }
             notify_session_status();
+        } else if (event->subscribe.attr_handle == s_summary_val_handle) {
+            s_summary_subscribed = event->subscribe.cur_notify;
+            ESP_LOGI(TAG, "coach summary notify %s",
+                     s_summary_subscribed ? "ON" : "OFF");
+            if (s_summary_subscribed && !motion_any_subscribed()) {
+                (void)set_stream_rate(SENSOR_PROTO_RATE_LIVE_HZ);
+            }
+            apply_stream_state();
         } else if ((event->subscribe.attr_handle == s_status_val_handle ||
                     event->subscribe.attr_handle == s_status_v16_val_handle) &&
                    event->subscribe.cur_notify) {
@@ -1477,6 +1644,20 @@ static void host_task(void *param)
 
 esp_err_t ble_tracker_init(void)
 {
+    rowing_calib_t cal = {.sign = 1, .shaft_axis = 2};
+    int8_t sign = 1;
+    bool zeroed = false;
+    uint8_t axis = 2;
+    int16_t feather = 0;
+    if (device_config_get_oar(&sign, &zeroed, &axis, &feather) == ESP_OK) {
+        cal.sign = sign;
+        cal.zeroed = zeroed;
+        cal.shaft_axis = axis;
+        cal.feather_ddeg = feather;
+    }
+    rowing_metrics_init();
+    rowing_metrics_restore(&cal);
+    rowing_metrics_set_stroke_cb(on_stroke);
     sensor_stream_set_sample_cb(on_sample, NULL);
     return ble_tracker_start_advertising();
 }

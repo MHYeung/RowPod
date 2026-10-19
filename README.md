@@ -65,12 +65,13 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 ├── main/                 Orchestration only (app_main)
 ├── components/
 │   ├── board/            Pin / address map
-│   ├── device_config/    NVS name, pod id, fixed single-node identity
+│   ├── device_config/    NVS name, pod id, oar side/zero, fixed single-node identity
 │   ├── i2c_bus/          Single I2C master owner
 │   ├── qmi8658/          IMU driver
 │   ├── qmc5883p/         Magnetometer driver
 │   ├── mahony/           On-device AHRS (gyro + accel + mag yaw)
-│   ├── sensor_protocol/  BLE wire frames (v1 / v16 / fused) + UUIDs
+│   ├── sensor_protocol/  BLE wire frames (v1 / v16 / fused / coach summary) + UUIDs
+│   ├── rowing_metrics/   On-pod catch/finish/arc (port of the browser tracker)
 │   ├── sensor_stream/    Native-clock 56/112/224/448 Hz DRDY stream + Mahony
 │   ├── ble_tracker/      NimBLE peripheral + queued packet batching / drain
 │   ├── ui/               Status LEDs + button gestures

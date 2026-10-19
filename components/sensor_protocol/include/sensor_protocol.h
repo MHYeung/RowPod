@@ -17,6 +17,8 @@ extern "C" {
 #define SENSOR_PROTO_DATA_V16_UUID_STR "9b7e1003-2b2f-4f71-9b86-4bb2e6d54f00"
 /** On-device Mahony: uint32 sample_index + Q15 quat + accel + mag. */
 #define SENSOR_PROTO_DATA_FUSED_UUID_STR "9b7e1004-2b2f-4f71-9b86-4bb2e6d54f00"
+/** One notify per completed stroke for a speed-coach central. 20 bytes, MTU 23. */
+#define SENSOR_PROTO_DATA_SUMMARY_UUID_STR "9b7e1005-2b2f-4f71-9b86-4bb2e6d54f00"
 
 /** Pod configuration / software-sync service (fixed protocol UUIDs). */
 #define SENSOR_PROTO_CFG_SVC_UUID_STR   "9b7e2000-2b2f-4f71-9b86-4bb2e6d54f00"
@@ -33,6 +35,8 @@ extern "C" {
 #define SENSOR_PROTO_CFG_CAPS_UUID_STR    "9b7e2009-2b2f-4f71-9b86-4bb2e6d54f00"
 #define SENSOR_PROTO_CFG_SESSION_V16_UUID_STR "9b7e200a-2b2f-4f71-9b86-4bb2e6d54f00"
 #define SENSOR_PROTO_CFG_STATUS_V16_UUID_STR  "9b7e200b-2b2f-4f71-9b86-4bb2e6d54f00"
+/** Speed-coach control: ZERO / SET_SIGN / CLEAR. Not used by the phone PWA. */
+#define SENSOR_PROTO_CFG_COACH_UUID_STR "9b7e200c-2b2f-4f71-9b86-4bb2e6d54f00"
 
 #define SENSOR_PROTO_FRAME_LEN      20
 #define SENSOR_PROTO_FRAME_V16_LEN  22
@@ -49,6 +53,19 @@ extern "C" {
 #define SENSOR_PROTO_CFG_STATUS_V16_LEN  56
 #define SENSOR_PROTO_CFG_SYNC_REQ_LEN  8
 #define SENSOR_PROTO_CFG_SYNC_RSP_LEN  20
+#define SENSOR_PROTO_SUMMARY_LEN       20
+#define SENSOR_PROTO_SUMMARY_VER       1
+/** summary.flags */
+#define SENSOR_PROTO_SUMMARY_FLAG_ZEROED  0x01
+#define SENSOR_PROTO_SUMMARY_FLAG_FEATHER 0x02
+#define SENSOR_PROTO_SUMMARY_FLAG_VALID   0x04
+/** Writes to the coach-control characteristic. SET_SIGN carries a second byte. */
+#define SENSOR_PROTO_COACH_ZERO     1
+#define SENSOR_PROTO_COACH_SET_SIGN 2
+#define SENSOR_PROTO_COACH_CLEAR    3
+/** SET_SIGN argument: 0 keeps catch-to-finish positive for this mount, 1 flips it. */
+#define SENSOR_PROTO_COACH_SIDE_STROKE 0
+#define SENSOR_PROTO_COACH_SIDE_BOW    1
 /** Sync response: uint64 client_ms, uint64 device_us, uint32 sample_index. */
 /** batt.flags bit0: reading valid */
 #define SENSOR_PROTO_BATT_FLAG_VALID  0x01
@@ -112,6 +129,7 @@ extern "C" {
 #define SENSOR_PROTO_CAP_FLAG_APPLIED_RATE    0x08
 #define SENSOR_PROTO_CAP_FLAG_32BIT_SEQ       0x10
 #define SENSOR_PROTO_CAP_FLAG_FUSED_FRAME     0x20
+#define SENSOR_PROTO_CAP_FLAG_COACH_SUMMARY   0x40
 /** Rate support bitmask bits. */
 #define SENSOR_PROTO_RATE_MASK_56             0x01
 #define SENSOR_PROTO_RATE_MASK_112            0x02
@@ -225,6 +243,29 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(sensor_proto_frame_fused_t) == SENSOR_PROTO_FRAME_FUSED_LEN,
                "fused frame size");
+
+/**
+ * @brief Per-stroke summary for a speed-coach central.
+ *
+ * Angles are decidegrees (0.1 deg). arc_ddeg is the absolute drive arc.
+ * spm_x10 is catch-to-catch rate times 10. batt_pct is 255 when unknown.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ver;
+    uint8_t flags;
+    uint16_t stroke_idx;
+    uint32_t sample_index;
+    int16_t catch_ddeg;
+    int16_t finish_ddeg;
+    uint16_t arc_ddeg;
+    uint16_t spm_x10;
+    uint16_t drive_ms;
+    uint8_t batt_pct;
+    uint8_t reserved;
+} sensor_proto_summary_t;
+
+_Static_assert(sizeof(sensor_proto_summary_t) == SENSOR_PROTO_SUMMARY_LEN,
+               "coach summary size");
 
 typedef struct __attribute__((packed)) {
     uint8_t ver;
