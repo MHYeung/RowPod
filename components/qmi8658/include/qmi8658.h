@@ -44,6 +44,15 @@ esp_err_t qmi8658_get_scale(qmi8658_scale_t *out);
  */
 esp_err_t qmi8658_set_odr_for_rate(uint16_t rate_hz);
 
+/**
+ * @brief Disable accel/gyro and the internal oscillator.
+ *
+ * CTRL7 clears aEN/gEN, then CTRL1 bit0 (SensorDisable) stops the oscillator.
+ * Call only from the task that owns the I2C bus. After this returns ESP_OK
+ * the driver is not ready until the chip is reset and qmi8658_init() runs again.
+ */
+esp_err_t qmi8658_power_down(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -30,12 +30,13 @@ static void on_button_event(ui_button_event_t event)
         return;
     }
 
-    /* Light-sleep wake qualification is owned by power.c; no awake action. */
+    /* Deep-sleep wake is qualified in power_boot_gate(); no awake action. */
     ESP_LOGI(TAG, "long press handled as sleep-wake gesture");
 }
 
 void app_main(void)
 {
+    power_boot_gate(); /* may deep-sleep again; returns only for a real boot */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

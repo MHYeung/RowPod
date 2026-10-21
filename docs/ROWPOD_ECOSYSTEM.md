@@ -1,7 +1,7 @@
 # RowPod ecosystem — coaches, athletes, and how we are building it
 
 **Status:** RowPod host **1.4.4** (17 September 2026).  Pages root is RowPod; IMU lab is `lab.html`.  
-**Hardware:** C3-Tracker pod (ESP32-C3FH4, QMI8658A IMU, QMC5883P magnetometer).  
+**Hardware:** C3-Tracker pod v2 (ESP32-C3FH4, QMI8658A IMU, no magnetometer).  
 **This document** is the product-level map: what the whole stack does for a
 rowing coach or athlete, what is trustworthy today, and how development is
 actually proceeding. Protocol and accuracy detail lives in
@@ -135,21 +135,22 @@ is where the blade is in the stroke.
 
 ### 3.5 Session flow
 
-1. Wake pods (hold the button ~2 s from light sleep). Open RowPod on
+1. Wake pods (hold the button ~2 s from deep sleep). Open RowPod on
    **Android Chrome** or desktop **Chrome/Edge** over HTTPS or `localhost`.
 2. **Add pod** once per oar (target **2–4** links; an eight will not fit on one
    phone).
 3. Set boat class and Stroke sits. Assign seats and hands.
 4. Type **inboard / outboard** (cm). Outboard is pin to blade tip; it scales
    blade metres. Changing scull ↔ sweep fills defaults unless you typed spans.
-5. Square the blades, hold **perpendicular**, tap **Zero**. That sample is 0°
-   oar angle and 0° feather.
-6. **Start piece** → row → **Stop**. Watch spread, arc, and who is short.
+5. **Start piece** → row → **Stop**. The first stroke centres each fan.
+   Catch and finish degrees are estimates until you ask for a measured Zero.
+6. **Zero (measured)** only when you need degrees from a squared
+   perpendicular pose. Auto-centre cannot separate a short catch plus a long
+   finish from an arc that is just shifted.
 7. **Stroke CSV** — long format, one row per seat per stroke, filename
-   `rowpod_1.4.4_strokes_….csv`.
+   `rowpod_1.5.0_strokes_….csv`. `angle_ref` is `auto` or `zero`.
 
-Re-Zero after remounting or a long piece if absolute catch degrees have walked.
-**Arc** (finish − catch) is more robust than the absolute catch number.
+**Arc** (finish − catch), catch timing, and in-sync do not depend on Zero.
 
 ### 3.6 What the CSV is for
 
@@ -171,10 +172,12 @@ on that stroke (see §6).
 
 | Chip | Meaning |
 |------|---------|
-| **Zero first** | Do not coach from degrees yet. |
+| **row one stroke to centre** | No angle reference yet. Timing still works. |
+| **auto centre · est. degrees** | First stroke set the arc centre. Catch and finish degrees are estimates. |
+| **Zero first** | Measured Zero has not settled. Do not coach from degrees yet. |
 | **mag yaw** | Browser fell back to fused quaternions. Catch degrees are low confidence near iron (gate, pin, rigger). Re-Zero often. |
-| **gyro settling** | Raw gyro, few complete strokes of lock. |
-| **gyro lock** | Preferred: raw gyro, Zeroed, midpoint walk under 8°. |
+| **gyro settling** | Raw gyro, few complete strokes of lock, after a measured Zero. |
+| **gyro lock** | Preferred measured state: raw gyro, Zeroed, midpoint walk under 8°. |
 | **clock ±N ms** | Timing confidence, separate from angle. |
 | **feather?** | Live feather moved with the fan on the first drives after Zero. Do not coach Feather Δt. |
 
@@ -378,7 +381,7 @@ finishes). Firmware major / v2 remains an owner decision.
 | Slice | Host | Coach question |
 |-------|------|----------------|
 | **A** | 1.4 Honest Crew Clock **shipped** | Who is late vs stroke, and is the crew inside *my* window? Confirm on water CSV. |
-| **B** | 1.5 Feather + blade flags | Square before catch? Wash / lock-delay? Open blade vs short catch? After A. |
+| **B** | 1.6 Feather + blade flags | Square before catch? Wash / lock-delay? Open blade vs short catch? After connect-and-go. |
 | **C** | 1.6 CSV review | Who faded in the last third? Rolling in-sync. Relative drive-rate overlay. No watts. After A. |
 
 Still true from the 1.3.0 CSVs:

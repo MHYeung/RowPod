@@ -253,6 +253,24 @@ const meta = {
   assertEq(decoded.maxRateHz, 448, "caps max rate 448");
   assertEq(decoded.imuRateHz, 448, "caps imu rate 448");
   assert(decoded.rates[448], "caps advertises 448 Hz");
+  assert(decoded.hasMag, "v1 caps with mag rate have a magnetometer");
+  assertEq(decoded.hwRev, 1, "reserved hw byte 0 is legacy v1");
+}
+
+/* --- v2 caps: no magnetometer, hw_rev 2 --- */
+{
+  const caps = new Uint8Array(20);
+  caps[0] = 2;
+  caps[1] = 0x3f;
+  caps[2] = 0x0f;
+  caps[6] = 0;
+  caps[7] = 2;
+  new DataView(caps.buffer).setUint16(8, 247, true);
+  const decoded = decodeCaps(new DataView(caps.buffer));
+  assert(!decoded.hasMag, "v2 mag rate 0 has no magnetometer");
+  assertEq(decoded.magRateHz, 0, "v2 mag rate");
+  assertEq(decoded.hwRev, 2, "v2 hardware revision");
+  assert(decoded.supportsFused, "v2 still advertises fused frames");
 }
 
 /* --- fused capabilities --- */

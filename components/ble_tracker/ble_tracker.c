@@ -343,6 +343,7 @@ static void fill_caps(sensor_proto_caps_t *caps)
     caps->imu_rate_hz =
         sensor_proto_rate_to_wire(sensor_stream_get_applied_rate_hz());
     caps->mag_rate_hz = sensor_stream_get_mag_rate_hz();
+    caps->hw_rev = SENSOR_PROTO_HW_REV_V2;
     caps->att_mtu = s_att_mtu;
     caps->queue_depth_max = FRAME_QUEUE_DEPTH;
     caps->firmware_proto = SENSOR_PROTO_FORMAT_VER_FUSED;

@@ -5,15 +5,19 @@
  * estimate, then a stroke-midpoint lock so gyro bias cannot walk the fan off
  * Zero. Fused Mahony yaw is fallback only — it still follows the magnetometer.
  *
- * After Zero, the first complete stroke sets the arc midpoint vs perpendicular.
- * Later strokes keep that midpoint; DC leaks toward it only while ω_vert > 0
- * (the drive) so recovery does not jump.
+ * Connect-and-go: the first complete stroke centres the arc on a nominal
+ * rig midpoint and takes feather from that drive. Zero is optional and
+ * switches the reference to a measured perpendicular pose.
+ *
+ * After a reference exists, later strokes keep that midpoint. DC leaks
+ * toward it only while ω_vert > 0 (the drive) so recovery does not jump.
  */
 const DEFAULT_REFRACTORY_MS = 350;
 const DEFAULT_OMEGA_PEAK = 25;
-const GRAVITY_LP_TAU_S = 0.35;
-const DC_ALPHA = 0.85;
+const DC_ALPHA = 0.2;
 const DC_TAU_S = 0.45;
+const GRAVITY_TRIM_TAU_S = 2;
+const BIAS_CLAMP_DPS = 5;
 const MIN_ARC_DEG = 20;
 const FINISH_TIMEOUT_MS = 2500;
 const FEATHER_ON_DEG = 45;
@@ -119,6 +123,7 @@ export class OarAngleTracker {
   }
 
   _resetFilters() {
+    const nominal = this._nominalCentre || 0;
     this.prevT = null;
     this.theta = 0;
     this.omegaVert = 0;
@@ -136,6 +141,23 @@ export class OarAngleTracker {
     this._shaftAxis = 2;
     this._featherRef = 0;
     this.feather = 0;
+    this._angleRef = "none";
+    this._nominalCentre = nominal;
+    this._featherSin = 0;
+    this._featherCos = 0;
+    this._featherN = 0;
+    this._omegaBias = 0;
+    this._stillSec = 0;
+    this._stillSum = 0;
+    this._stillN = 0;
+    this._recentArcs = [];
+    this._prevLockedCatchT = null;
+    this._driveSq = 0;
+    this._drivePeak = 0;
+    this._thetaAtPeak = 0;
+    this._indexSum = 0;
+    this._indexN = 0;
+    this._prevFinishT = null;
     this._expect = "catch";
     this.lastOmega = 0;
     this.lastT = 0;
@@ -172,7 +194,13 @@ export class OarAngleTracker {
     this.sign = sign < 0 ? -1 : 1;
   }
 
-  /** Hold the oar squared and perpendicular, then call this. */
+  /** Arc centre used when the first stroke auto-centres. Sweep −12°, scull −10°. */
+  setNominalCentre(deg) {
+    const n = Number(deg);
+    this._nominalCentre = Number.isFinite(n) ? n : 0;
+  }
+
+  /** Optional measured pose: squared and perpendicular becomes 0°. */
   zero() {
     this._dc = this._raw;
     this._dcTarget = this._raw;
@@ -185,6 +213,12 @@ export class OarAngleTracker {
     this._expect = "catch";
     this.zeroed = true;
     this.theta = 0;
+    this._angleRef = "zero";
+    this._featherSin = 0;
+    this._featherCos = 0;
+    this._featherN = 0;
+    this._recentArcs = [];
+    this._prevLockedCatchT = null;
     this._featherTrusted = true;
     this._driveLeakCount = 0;
     this._driveDone = 0;
@@ -207,6 +241,11 @@ export class OarAngleTracker {
     this._awaitingFeather = false;
     this.peakAbsOmega = 0;
     this.lastEventT = -Infinity;
+    this._indexSum = 0;
+    this._indexN = 0;
+    this._prevFinishT = null;
+    this._driveSq = 0;
+    this._drivePeak = 0;
   }
 
   /**
@@ -222,24 +261,14 @@ export class OarAngleTracker {
     const dtSec = this.prevT != null ? (t - this.prevT) / 1000 : 0;
     const dtOk = dtSec > 1e-4 && dtSec < 0.15;
     const eng = frame.eng || {};
-    if (dtOk) {
-      const k = 1 - Math.exp(-dtSec / GRAVITY_LP_TAU_S);
-      const ax = Number.isFinite(eng.ax) ? eng.ax : 0;
-      const ay = Number.isFinite(eng.ay) ? eng.ay : 0;
-      const az = Number.isFinite(eng.az) ? eng.az : 1;
-      this._g.x += k * (ax - this._g.x);
-      this._g.y += k * (ay - this._g.y);
-      this._g.z += k * (az - this._g.z);
-    }
+    this._updateGravity(eng, dtSec, dtOk);
 
     let omegaVert = 0;
     if (hasRawGyro(frame)) {
       this._source = "gyro";
-      const gn = hypot3(this._g.x, this._g.y, this._g.z);
-      omegaVert =
-        this.sign *
-        (eng.gx * this._g.x + eng.gy * this._g.y + eng.gz * this._g.z) /
-        gn;
+      const omegaVertRaw = this._verticalRate(eng);
+      this._noteStillBias(eng, dtSec, dtOk, omegaVertRaw);
+      omegaVert = omegaVertRaw - this._omegaBias;
       if (dtOk) this._raw += omegaVert * dtSec;
     } else if (frame.quat) {
       this._source = "yaw";
@@ -256,13 +285,9 @@ export class OarAngleTracker {
       if (dtOk) omegaVert = (this.sign * dYaw) / dtSec;
     } else {
       this._source = "gyro";
-      const gn = hypot3(this._g.x, this._g.y, this._g.z);
-      omegaVert =
-        this.sign *
-        ((eng.gx || 0) * this._g.x +
-          (eng.gy || 0) * this._g.y +
-          (eng.gz || 0) * this._g.z) /
-        gn;
+      const omegaVertRaw = this._verticalRate(eng);
+      this._noteStillBias(eng, dtSec, dtOk, omegaVertRaw);
+      omegaVert = omegaVertRaw - this._omegaBias;
       if (dtOk) this._raw += omegaVert * dtSec;
     }
 
@@ -273,7 +298,13 @@ export class OarAngleTracker {
     this.theta = this._raw - this._dc;
     this.feather = wrap180(featherDeg(this._g, this._shaftAxis) - this._featherRef);
     this.omegaVert = omegaVert;
-    if (dtOk && this._expect === "finish") this._accumDrive(this.theta, this.feather);
+    if (dtOk && this._expect === "finish") {
+      this._accumDrive(this.theta, this.feather);
+      this._accumDrivePower(omegaVert, dtSec);
+      if (this._angleRef === "none") {
+        this._accumRawFeather(featherDeg(this._g, this._shaftAxis));
+      }
+    }
     const tOmega = this.prevT != null ? (this.prevT + t) / 2 : t;
     const events = [];
     const event = this._maybeEvent(t, tOmega, this.theta, omegaVert);
@@ -331,19 +362,188 @@ export class OarAngleTracker {
     return leaked;
   }
 
+  _clampBias(v) {
+    return Math.max(-BIAS_CLAMP_DPS, Math.min(BIAS_CLAMP_DPS, v));
+  }
+
+  /** ġ = −ω × g, then a slow nudge toward accel when the specific force is 1 g. */
+  _updateGravity(eng, dtSec, dtOk) {
+    if (!dtOk) return;
+    const ax = Number.isFinite(eng.ax) ? eng.ax : 0;
+    const ay = Number.isFinite(eng.ay) ? eng.ay : 0;
+    const az = Number.isFinite(eng.az) ? eng.az : 1;
+    const wx = ((Number.isFinite(eng.gx) ? eng.gx : 0) * Math.PI) / 180;
+    const wy = ((Number.isFinite(eng.gy) ? eng.gy : 0) * Math.PI) / 180;
+    const wz = ((Number.isFinite(eng.gz) ? eng.gz : 0) * Math.PI) / 180;
+    const cx = wy * this._g.z - wz * this._g.y;
+    const cy = wz * this._g.x - wx * this._g.z;
+    const cz = wx * this._g.y - wy * this._g.x;
+    this._g.x -= cx * dtSec;
+    this._g.y -= cy * dtSec;
+    this._g.z -= cz * dtSec;
+    const an = hypot3(ax, ay, az);
+    if (Math.abs(an - 1) < 0.1) {
+      const k = 1 - Math.exp(-dtSec / GRAVITY_TRIM_TAU_S);
+      this._g.x += k * (ax / an - this._g.x);
+      this._g.y += k * (ay / an - this._g.y);
+      this._g.z += k * (az / an - this._g.z);
+    }
+    const gn = hypot3(this._g.x, this._g.y, this._g.z);
+    this._g.x /= gn;
+    this._g.y /= gn;
+    this._g.z /= gn;
+  }
+
+  _verticalRate(eng) {
+    const gn = hypot3(this._g.x, this._g.y, this._g.z);
+    return (
+      (this.sign *
+        ((eng.gx || 0) * this._g.x +
+          (eng.gy || 0) * this._g.y +
+          (eng.gz || 0) * this._g.z)) /
+      gn
+    );
+  }
+
+  _noteStillBias(eng, dtSec, dtOk, omegaVertRaw) {
+    if (!dtOk) return;
+    const gmag = hypot3(eng.gx || 0, eng.gy || 0, eng.gz || 0);
+    const an = hypot3(
+      Number.isFinite(eng.ax) ? eng.ax : 0,
+      Number.isFinite(eng.ay) ? eng.ay : 0,
+      Number.isFinite(eng.az) ? eng.az : 1
+    );
+    if (gmag < 3 && Math.abs(an - 1) < 0.1) {
+      this._stillSec += dtSec;
+      this._stillSum += omegaVertRaw;
+      this._stillN += 1;
+      if (this._stillSec >= 0.5 && this._stillN > 0) {
+        this._omegaBias = this._clampBias(this._stillSum / this._stillN);
+      }
+    } else {
+      this._stillSec = 0;
+      this._stillSum = 0;
+      this._stillN = 0;
+    }
+  }
+
+  _absorbWalk(errDeg, catchT) {
+    if (this._prevLockedCatchT != null) {
+      const periodSec = (catchT - this._prevLockedCatchT) / 1000;
+      if (periodSec > 0.4 && periodSec < 8) {
+        const implied = errDeg / periodSec;
+        this._omegaBias = this._clampBias(
+          this._omegaBias + 0.5 * (implied - this._omegaBias)
+        );
+      }
+    }
+    this._prevLockedCatchT = catchT;
+  }
+
+  _arcFloor() {
+    if (!this._recentArcs.length) return this.minArcDeg;
+    const sorted = [...this._recentArcs].sort((a, b) => a - b);
+    const mid = sorted[Math.floor((sorted.length - 1) / 2)];
+    return Math.max(this.minArcDeg, 0.5 * mid);
+  }
+
+  _rememberArc(arc) {
+    if (!(arc > 0)) return;
+    this._recentArcs.push(arc);
+    if (this._recentArcs.length > 5) this._recentArcs.shift();
+  }
+
+  _accumDrivePower(omega, dtSec) {
+    this._driveSq += omega * omega * dtSec;
+    if (Math.abs(omega) >= Math.abs(this._drivePeak)) {
+      this._drivePeak = omega;
+      this._thetaAtPeak = this.theta;
+    }
+  }
+
+  /** Unitless index: 100 means "like the first strokes of this piece". Not watts. */
+  _stampDrive(event) {
+    const driveMs = this.lastCatch ? event.t - this.lastCatch.t : null;
+    const recoveryMs =
+      this._prevFinishT != null && this.lastCatch
+        ? this.lastCatch.t - this._prevFinishT
+        : null;
+    event.driveMs = driveMs;
+    event.recoveryMs = recoveryMs;
+    event.driveRatio =
+      driveMs != null && recoveryMs != null && driveMs + recoveryMs > 0
+        ? driveMs / (driveMs + recoveryMs)
+        : null;
+    event.peakOmegaDps = this._drivePeak;
+    event.thetaAtPeakDeg = this._thetaAtPeak;
+    event.driveRaw = this._driveSq;
+    if (this._indexN < 10) {
+      this._indexSum += this._driveSq;
+      this._indexN += 1;
+    }
+    const mean = this._indexN > 0 ? this._indexSum / this._indexN : 0;
+    event.driveIndex = mean > 0 ? (100 * this._driveSq) / mean : 0;
+    this._prevFinishT = event.t;
+  }
+
+  _accumRawFeather(deg) {
+    const rad = (deg * Math.PI) / 180;
+    this._featherSin += Math.sin(rad);
+    this._featherCos += Math.cos(rad);
+    this._featherN += 1;
+  }
+
+  /**
+   * First stroke with no Zero: shift the angle frame so the arc centre is the
+   * nominal rig midpoint, and set feather 0 to the squared drive.
+   * CrewSync keeps these event objects, so the shift has to land on them.
+   */
+  _autoCentre(finishEvent) {
+    const mid = 0.5 * (this.lastCatch.theta + finishEvent.theta);
+    const shift = mid - this._nominalCentre;
+    this._dc += shift;
+    this._dcTarget += shift;
+    this.theta -= shift;
+    this.lastCatch.theta -= shift;
+    finishEvent.theta -= shift;
+    if (this._featherN > 0) {
+      this._featherRef =
+        Math.atan2(this._featherSin, this._featherCos) * (180 / Math.PI);
+    }
+    this.lastCatch.feather = wrap180(this.lastCatch.feather - this._featherRef);
+    finishEvent.feather = wrap180(finishEvent.feather - this._featherRef);
+    this.feather = wrap180(featherDeg(this._g, this._shaftAxis) - this._featherRef);
+    this._thetaAtPeak -= shift;
+    this._midRef = this._nominalCentre;
+    this._lastWalk = 0;
+    this._angleRef = "auto";
+    this.lastCatch.ref = "auto";
+    finishEvent.ref = "auto";
+    this._prevLockedCatchT = this.lastCatch.t;
+    this._rememberArc(Math.abs(finishEvent.theta - this.lastCatch.theta));
+  }
+
   _lockStrokeDc(finishEvent) {
     if (!this.lastCatch) return;
+    if (this._angleRef === "none") {
+      this._autoCentre(finishEvent);
+      return;
+    }
     const mid = 0.5 * (this.lastCatch.theta + finishEvent.theta);
     if (this._midRef == null) {
       this._midRef = mid;
       this._lastWalk = 0;
+      this._prevLockedCatchT = this.lastCatch.t;
+      this._rememberArc(Math.abs(finishEvent.theta - this.lastCatch.theta));
       return;
     }
     const err = mid - this._midRef;
     this._lastWalk = err;
+    this._absorbWalk(err, this.lastCatch.t);
     /* Target only; _dc leaks during the next drive so recovery does not jump. */
     this._dcTarget += DC_ALPHA * err;
     this._dcStrokes += 1;
+    this._rememberArc(Math.abs(finishEvent.theta - this.lastCatch.theta));
   }
 
   _maybeEvent(t, tOmega, theta, omega) {
@@ -370,10 +570,12 @@ export class OarAngleTracker {
     const u = Math.max(0, Math.min(1, fracT));
     const thetaCross = this.lastTheta + u * (theta - this.lastTheta);
     const featherCross = this.lastFeather + u * (this.feather - this.lastFeather);
+    if (type === "catch" && this._midRef != null && !(thetaCross < this._midRef)) {
+      return null;
+    }
     if (type === "finish" && this.lastCatch) {
-      if (Math.abs(thetaCross - this.lastCatch.theta) < this.minArcDeg) {
-        return null;
-      }
+      const arc = Math.abs(thetaCross - this.lastCatch.theta);
+      if (arc < this._arcFloor()) return null;
     }
     const event = {
       type,
@@ -381,15 +583,26 @@ export class OarAngleTracker {
       theta: thetaCross,
       feather: featherCross,
       omegaPeak: this.peakAbsOmega,
+      ref: this._angleRef,
     };
 
     if (type === "catch") {
+      if (this._angleRef === "none") {
+        this._shaftAxis = pickShaftAxis(this._g);
+        this._featherSin = 0;
+        this._featherCos = 0;
+        this._featherN = 0;
+      }
       this.lastCatch = event;
       this._awaitingFeather = false;
       this._resetDriveStats();
+      this._driveSq = 0;
+      this._drivePeak = 0;
+      this._thetaAtPeak = thetaCross;
     } else {
       this.lastFinish = event;
       this._lockStrokeDc(event);
+      this._stampDrive(event);
       const leaked = this._scoreDriveLeak();
       this._awaitingFeather = this._featherTrusted && !leaked;
     }
@@ -425,6 +638,7 @@ export class OarAngleTracker {
       theta: this.theta,
       feather: absNow >= FEATHER_ON_DEG ? feather : this.lastFeather,
       trusted: this._featherTrusted,
+      ref: this._angleRef,
     };
     this._awaitingFeather = false;
     this.lastFeatherOn = event;
@@ -440,8 +654,9 @@ export class OarAngleTracker {
     const arc =
       catchDeg != null && finishDeg != null ? finishDeg - catchDeg : null;
     const walk = Math.abs(this._lastWalk);
-    let confidence = "zero";
-    if (this.zeroed && this._source === "yaw") confidence = "yaw";
+    let confidence = "centring";
+    if (this._angleRef === "auto") confidence = "auto";
+    else if (this.zeroed && this._source === "yaw") confidence = "yaw";
     else if (this.zeroed && this._source === "gyro" && this._dcStrokes < 3) {
       confidence = "ok";
     } else if (this.zeroed && this._source === "gyro" && walk < 8) {
@@ -450,8 +665,9 @@ export class OarAngleTracker {
     return {
       theta: this.theta,
       omegaVert: this.omegaVert,
-      omegaBias: 0,
+      omegaBias: this._omegaBias,
       zeroed: this.zeroed,
+      angleRef: this._angleRef,
       lastCatch: this.lastCatch,
       lastFinish: this.lastFinish,
       lastFeatherOn: this.lastFeatherOn,

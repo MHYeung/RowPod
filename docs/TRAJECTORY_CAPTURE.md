@@ -76,7 +76,7 @@ especially when the elbow bends.
 
 - QMI8658A datasheet: CTRL2/CTRL3 full-scale and 6-DoF ODR tables; DRDY behavior.
 - QMI8658A datasheet section 8: FIFO and watermark behavior.
-- QMC5883P datasheet: normal mode setup, CTRL1 ODR/OSR, CTRL2 range/set-reset.
+- RowPod v2 has no magnetometer. Older v1 captures that used a QMC5883P are documented in that sensor's datasheet (CTRL1 ODR/OSR, CTRL2 range).
 - ESP-IDF NimBLE documentation: GATT notifications, ATT MTU, and connection
   throughput.
 

@@ -18,6 +18,7 @@ import {
   getBoatClass,
   defaultHandForSeat,
   portStarboardFromHand,
+  nominalArcCentreDeg,
   seatInBoat,
   loadRig,
   saveRig,
@@ -55,6 +56,14 @@ const matchNoteEl = document.getElementById("matchNote");
 const catchCueEl = document.getElementById("catchCue");
 const alignRailEl = document.getElementById("alignRail");
 const alignTrackEl = document.getElementById("alignTrack");
+const podCountEl = document.getElementById("podCount");
+const podCountLabel = document.getElementById("podCountLabel");
+const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const cueKinds = ["together", "in", "out", "untrusted", "wait", "none"];
+
+function reducedMotion() {
+  return motionQuery.matches;
+}
 
 function setStatus(text, cls = "") {
   statusEl.textContent = text;
@@ -63,6 +72,11 @@ function setStatus(text, cls = "") {
 
 function fmtDeg(v) {
   return v == null || !Number.isFinite(v) ? "—" : `${v.toFixed(0)}°`;
+}
+
+function fmtEstDeg(v, estimate) {
+  const text = fmtDeg(v);
+  return estimate && text !== "—" ? `~${text}` : text;
 }
 
 function fmtMs(v) {
@@ -89,6 +103,17 @@ try {
   let pieceActive = false;
   let pieceT0 = 0;
   let rig = loadRig();
+  /** @type {Map<string, {theta:number, arcKey:string, revealT0:number}>} */
+  const fanMotion = new Map();
+  /** @type {Map<string, HTMLTableRowElement>} */
+  const rowCache = new Map();
+  /** @type {Map<string, HTMLElement>} */
+  const markCache = new Map();
+  const knownPods = new Set();
+  let syncTarget;
+  let syncShown = 0;
+  let syncRaf = 0;
+  let seenMatched = null;
 
   function syncRigControls() {
     const boat = getBoatClass(rig.boatClass);
@@ -196,6 +221,7 @@ try {
       trackers.set(session.id, tr);
     }
     tr.setSign(session.side === "port" ? -1 : 1);
+    tr.setNominalCentre(nominalArcCentreDeg(getBoatClass(rig.boatClass).kind));
     return tr;
   }
 
@@ -230,6 +256,41 @@ try {
     ctx.restore();
   }
 
+  function fanState(seat) {
+    let state = fanMotion.get(seat.id);
+    if (!state) {
+      state = {
+        theta: Number.isFinite(seat.theta) ? seat.theta : 0,
+        arcKey: "",
+        revealT0: 0,
+      };
+      fanMotion.set(seat.id, state);
+    }
+    return state;
+  }
+
+  function smoothTheta(state, target) {
+    if (!Number.isFinite(target)) return state.theta;
+    if (reducedMotion() || !Number.isFinite(state.theta)) {
+      state.theta = target;
+      return target;
+    }
+    const next = state.theta + (target - state.theta) * 0.28;
+    state.theta = Math.abs(target - next) < 0.04 ? target : next;
+    return state.theta;
+  }
+
+  function arcReveal(state, key, now) {
+    if (!key) return 1;
+    if (state.arcKey !== key) {
+      state.arcKey = key;
+      state.revealT0 = now;
+    }
+    if (reducedMotion()) return 1;
+    const u = Math.min(1, (now - state.revealT0) / 250);
+    return 1 - (1 - u) ** 3;
+  }
+
   function drawFan() {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const cssW = fanCanvas.clientWidth || 360;
@@ -243,6 +304,12 @@ try {
     const ctx = fanCanvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
+
+    const wash = ctx.createRadialGradient(cssW * 0.5, cssH * 0.2, cssW * 0.08, cssW * 0.5, cssH * 0.72, cssW * 0.72);
+    wash.addColorStop(0, "rgba(81, 65, 77, 0.28)");
+    wash.addColorStop(1, "rgba(16, 10, 14, 0.55)");
+    ctx.fillStyle = wash;
+    ctx.fillRect(0, 0, cssW, cssH);
 
     const padX = Math.max(48, cssW * 0.1);
     const cx = cssW / 2;
@@ -290,23 +357,32 @@ try {
     ctx.fillText("FINISH", toXY(90, r).x, cy + 16);
 
     const seats = liveSeats();
+    const now = performance.now();
+    const liveIds = new Set(seats.map((s) => s.id));
+    for (const id of fanMotion.keys()) {
+      if (!liveIds.has(id)) fanMotion.delete(id);
+    }
     const withArc = seats.filter((s) => s.catch && s.finish);
     const laneN = Math.max(withArc.length, 1);
-    const barW = Math.max(12, Math.min(20, (r * 0.36) / laneN));
+    const barFloor = laneN > 4 ? 7 : 12;
+    const barW = Math.max(barFloor, Math.min(20, (r * 0.36) / laneN));
 
     withArc.forEach((seat, i) => {
       const inner = seatLaneRadius(i, laneN, r);
       const cDeg = clampFanDeg(seat.catch.theta);
       const fDeg = clampFanDeg(seat.finish.theta);
+      const motion = fanState(seat);
+      const reveal = arcReveal(motion, `${seat.catch.t}|${seat.finish.t}`, now);
+      const shownFinish = cDeg + (fDeg - cDeg) * reveal;
       const color = seat.color || POD_COLORS[i];
       ctx.strokeStyle = color;
       ctx.lineWidth = barW;
       ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.arc(cx, cy, inner, oarToCanvasRad(cDeg), oarToCanvasRad(fDeg), FAN_ARC_CCW);
+      ctx.arc(cx, cy, inner, oarToCanvasRad(cDeg), oarToCanvasRad(shownFinish), FAN_ARC_CCW);
       ctx.stroke();
       const start = toXY(cDeg, inner);
-      const end = toXY(fDeg, inner);
+      const end = toXY(shownFinish, inner);
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(start.x, start.y, barW * 0.42, 0, Math.PI * 2);
@@ -342,7 +418,7 @@ try {
 
     for (const seat of seats) {
       if (seat.theta == null || !Number.isFinite(seat.theta)) continue;
-      const shown = clampFanDeg(seat.theta);
+      const shown = clampFanDeg(smoothTheta(fanState(seat), seat.theta));
       const tip = toXY(shown, r * 0.96);
       ctx.strokeStyle = seat.color;
       ctx.lineWidth = 3.5;
@@ -373,40 +449,75 @@ try {
     const caught = stroke?.seats.filter((s) => s.catch) || [];
     if (!ref?.catch || caught.length < 2) {
       alignRailEl.hidden = true;
-      alignTrackEl.replaceChildren();
+      if (markCache.size) {
+        for (const mark of markCache.values()) mark.remove();
+        markCache.clear();
+      }
       return;
     }
     alignRailEl.hidden = false;
     const span = Math.max(thresholdMs * 1.6, 64);
     const sessions = registry.list();
     const colorOf = (id) => sessions.find((s) => s.id === id)?.color || "#392d37";
-    alignTrackEl.replaceChildren();
-    const windowEl = document.createElement("div");
-    windowEl.className = "align-window";
+    let windowEl = alignTrackEl.querySelector(".align-window");
+    if (!windowEl) {
+      windowEl = document.createElement("div");
+      windowEl.className = "align-window";
+      alignTrackEl.prepend(windowEl);
+    }
     const winPct = (thresholdMs / span) * 50;
     windowEl.style.left = `${Math.max(0, 50 - winPct)}%`;
     windowEl.style.width = `${Math.min(100, winPct * 2)}%`;
-    alignTrackEl.appendChild(windowEl);
+    const seen = new Set();
     for (const seat of caught) {
       const dt = seat.id === ref.id ? 0 : seat.catch.t - ref.catch.t;
       const fmt = formatCatchVsStroke(dt, thresholdMs);
       if (fmt.kind === "untrusted") continue;
+      seen.add(seat.id);
+      let mark = markCache.get(seat.id);
+      if (!mark) {
+        mark = document.createElement("span");
+        markCache.set(seat.id, mark);
+        alignTrackEl.appendChild(mark);
+      }
       const pct = 50 + (50 * Math.max(-span, Math.min(span, dt))) / span;
-      const mark = document.createElement("span");
-      mark.className = `mark${seat.id === ref.id ? " ref" : ""}${fmt.kind === "out" ? " out" : ""}`;
+      const cls = `mark${seat.id === ref.id ? " ref" : ""}${fmt.kind === "out" ? " out" : ""}`;
+      if (mark.className !== cls) mark.className = cls;
       mark.style.left = `${pct}%`;
-      mark.style.background = seat.id === ref.id ? "" : colorOf(seat.id);
-      mark.title = `${seat.seat || "seat"} ${fmt.text}`;
-      alignTrackEl.appendChild(mark);
+      const bg = seat.id === ref.id ? "" : colorOf(seat.id);
+      if (mark.dataset.bg !== bg) {
+        mark.dataset.bg = bg;
+        mark.style.background = bg;
+      }
+      const title = `${seat.seat || "seat"} ${fmt.text}`;
+      if (mark.title !== title) mark.title = title;
     }
+    for (const [id, mark] of markCache) {
+      if (!seen.has(id)) {
+        mark.remove();
+        markCache.delete(id);
+      }
+    }
+  }
+
+  function setText(el, text) {
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  function cellClass(kind, isRef) {
+    if (isRef || kind === "none") return "";
+    if (kind === "out" || kind === "untrusted") return "late-out";
+    if (kind === "together") return "late-in";
+    return "";
   }
 
   function renderTable() {
     const sessions = registry.list().filter(sessionInSample);
-    seatRowsEl.replaceChildren();
     const snap = crew.snapshot();
     const last = snap.last;
-    for (const session of sessions) {
+    const seen = new Set();
+    sessions.forEach((session, index) => {
+      seen.add(session.id);
       const tr = trackers.get(session.id);
       const angle = tr?.snapshot() || {};
       const matched = last?.seats.find((s) => s.id === session.id);
@@ -420,7 +531,12 @@ try {
           ? matchedArc
           : driveArcDeg(catchEv?.theta, finishEv?.theta) ?? angle.arcDeg;
       const dFeather = featherDtVsRefMs(matched, ref);
-      const row = document.createElement("tr");
+      let row = rowCache.get(session.id);
+      if (!row) {
+        row = document.createElement("tr");
+        for (let i = 0; i < 11; i++) row.appendChild(document.createElement("td"));
+        rowCache.set(session.id, row);
+      }
       const dCatch = catchDtVsRefMs(matched, ref);
       const dFinish =
         matched?.finish && ref?.finish
@@ -428,57 +544,70 @@ try {
           : null;
       const vs = formatCatchVsStroke(dCatch, snap.thresholdMs);
       const vsFeather = formatCatchVsStroke(dFeather, snap.thresholdMs);
-      const isRef = matched && ref && matched.id === ref.id;
+      const isRef = Boolean(matched && ref && matched.id === ref.id);
       const rms = session.timebase?.ok ? session.timebase.rmsMs : null;
-      row.className = "";
-      if (last?.matchQuality === "wide_spread" || vs.kind === "untrusted") {
-        row.classList.add("warn-spread");
+      row.classList.toggle(
+        "warn-spread",
+        last?.matchQuality === "wide_spread" || vs.kind === "untrusted"
+      );
+      const vsCell = isRef ? "stroke" : vs.text;
+      const featherCell = isRef ? (matched?.feather ? "stroke" : "—") : vsFeather.text;
+      const cells = row.children;
+      const estimated = angle.angleRef === "auto" || catchEv?.ref === "auto";
+      const values = [
+        session.seat || session.position,
+        session.hand === "bow" ? "bow" : session.hand === "stroke" ? "stroke" : "—",
+        fmtEstDeg(catchEv?.theta, estimated),
+        fmtEstDeg(finishEv?.theta, estimated),
+        fmtDeg(arc),
+        fmtM(lengthM),
+        featherCell,
+        vsCell,
+        fmtMs(dFinish),
+        rms != null && Number.isFinite(rms) ? `±${rms.toFixed(0)}` : "—",
+        finishEv?.driveIndex != null && Number.isFinite(finishEv.driveIndex)
+          ? `${Math.round(finishEv.driveIndex)}`
+          : "—",
+      ];
+      const classes = [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        cellClass(vsFeather.kind, isRef),
+        cellClass(vs.kind, isRef),
+        "",
+        "",
+        "",
+      ];
+      for (let i = 0; i < values.length; i++) {
+        setText(cells[i], values[i]);
+        if (cells[i].className !== classes[i]) cells[i].className = classes[i];
       }
-      const vsCell = isRef
-        ? "stroke"
-        : vs.text;
-      const vsClass =
-        isRef || vs.kind === "none"
-          ? ""
-          : vs.kind === "out" || vs.kind === "untrusted"
-            ? "late-out"
-            : vs.kind === "together"
-              ? "late-in"
-              : "";
-      const featherCell = isRef
-        ? matched?.feather
-          ? "stroke"
-          : "—"
-        : vsFeather.text;
-      const featherClass =
-        isRef || vsFeather.kind === "none"
-          ? ""
-          : vsFeather.kind === "out" || vsFeather.kind === "untrusted"
-            ? "late-out"
-            : vsFeather.kind === "together"
-              ? "late-in"
-              : "";
-      row.innerHTML = `
-        <td>${session.seat || session.position}</td>
-        <td>${session.hand === "bow" ? "bow" : session.hand === "stroke" ? "stroke" : "—"}</td>
-        <td>${fmtDeg(catchEv?.theta)}</td>
-        <td>${fmtDeg(finishEv?.theta)}</td>
-        <td>${fmtDeg(arc)}</td>
-        <td>${fmtM(lengthM)}</td>
-        <td class="${featherClass}">${featherCell}</td>
-        <td class="${vsClass}">${vsCell}</td>
-        <td>${fmtMs(dFinish)}</td>
-        <td>${rms != null && Number.isFinite(rms) ? `±${rms.toFixed(0)}` : "—"}</td>`;
-      seatRowsEl.appendChild(row);
+      const at = seatRowsEl.children[index];
+      if (at !== row) seatRowsEl.insertBefore(row, at || null);
+    });
+    for (const [id, row] of rowCache) {
+      if (!seen.has(id)) {
+        row.remove();
+        rowCache.delete(id);
+      }
     }
   }
 
   function renderPods() {
     const sessions = registry.list();
+    const live = new Set(sessions.map((s) => s.id));
+    for (const id of knownPods) {
+      if (!live.has(id)) knownPods.delete(id);
+    }
     podListEl.replaceChildren();
     for (const session of sessions) {
       const card = document.createElement("article");
-      card.className = "pod-row";
+      card.className = knownPods.has(session.id) ? "pod-row" : "pod-row enter";
+      knownPods.add(session.id);
       card.style.borderLeftColor = session.color;
       const tb = session.timebase;
       const health =
@@ -494,13 +623,17 @@ try {
           ? "mag yaw"
           : "raw gyro v1";
       const confLabel = {
+        centring: "row one stroke to centre",
+        auto: "auto centre · est. degrees",
         zero: "Zero first",
         yaw: "low — mag heading",
         ok: "gyro settling",
         high: "gyro lock",
-      }[angle.confidence || "zero"];
+      }[angle.confidence || "centring"];
       const featherChip =
-        angle.zeroed && angle.featherTrusted === false ? " · feather?" : "";
+        angle.angleRef && angle.angleRef !== "none" && angle.featherTrusted === false
+          ? " · feather?"
+          : "";
       const walk =
         angle.walkDeg != null && angle.dcStrokes > 0
           ? ` · walk ${angle.walkDeg.toFixed(0)}°`
@@ -512,7 +645,7 @@ try {
             <span class="health ${health}">${session.sensorStatus}</span>
             ${tb?.ok ? ` · clock ±${tb.rmsMs.toFixed(0)} ms` : " · clock fitting"}
             · ${confLabel}${walk}${featherChip}
-            ${angle.zeroed && Number.isFinite(angle.feather) ? ` · feather ${angle.feather.toFixed(0)}°` : ""}
+            ${angle.angleRef && angle.angleRef !== "none" && Number.isFinite(angle.feather) ? ` · feather ${angle.feather.toFixed(0)}°` : ""}
           </span>
         </header>
         <div class="fields">
@@ -551,29 +684,89 @@ try {
     });
   }
 
+  function renderSyncPct(value) {
+    const key = value == null ? null : Math.round(value);
+    if (Object.is(key, syncTarget)) return;
+    syncTarget = key;
+    if (syncRaf) {
+      cancelAnimationFrame(syncRaf);
+      syncRaf = 0;
+    }
+    if (key == null) {
+      syncPctEl.textContent = "—";
+      return;
+    }
+    if (reducedMotion() || syncPctEl.textContent === "—") {
+      syncShown = key;
+      syncPctEl.textContent = `${key}%`;
+      return;
+    }
+    const from = syncShown;
+    const t0 = performance.now();
+    const step = (now) => {
+      const u = Math.min(1, (now - t0) / 400);
+      const eased = 1 - (1 - u) ** 3;
+      syncShown = from + (key - from) * eased;
+      syncPctEl.textContent = `${Math.round(syncShown)}%`;
+      if (u < 1) syncRaf = requestAnimationFrame(step);
+      else {
+        syncShown = key;
+        syncRaf = 0;
+      }
+    };
+    syncRaf = requestAnimationFrame(step);
+  }
+
+  function setCue(cue) {
+    if (!catchCueEl) return;
+    setText(catchCueEl, cue.text);
+    if (catchCueEl.dataset.kind !== cue.kind) {
+      for (const kind of cueKinds) catchCueEl.classList.remove(kind);
+      catchCueEl.classList.add(cue.kind);
+      catchCueEl.dataset.kind = cue.kind;
+    }
+  }
+
+  function flashNewStroke(total) {
+    if (seenMatched == null) {
+      seenMatched = total;
+      return;
+    }
+    if (total > seenMatched) {
+      for (const row of seatRowsEl.rows) {
+        row.classList.remove("stroke-flash");
+        void row.offsetWidth;
+        row.classList.add("stroke-flash");
+      }
+      if (catchCueEl) {
+        catchCueEl.classList.remove("pop");
+        void catchCueEl.offsetWidth;
+        catchCueEl.classList.add("pop");
+      }
+    }
+    seenMatched = total;
+  }
+
   function updateHeadline() {
     const snap = crew.snapshot();
-    if (!snap.ratedStrokes) {
-      syncPctEl.textContent = "—";
-    } else {
-      syncPctEl.textContent = `${Math.round(snap.timeInSyncPct)}%`;
-    }
-    spmEl.textContent = snap.spm ? snap.spm.toFixed(0) : "—";
-    catchSpreadEl.textContent =
-      snap.last?.catchSpreadMs != null ? fmtMs(snap.last.catchSpreadMs) : "—";
-    finishSpreadEl.textContent =
-      snap.last?.finishSpreadMs != null ? fmtMs(snap.last.finishSpreadMs) : "—";
-    strokeCountEl.textContent = String(snap.totalMatched);
+    renderSyncPct(snap.ratedStrokes ? snap.timeInSyncPct : null);
+    flashNewStroke(snap.totalMatched);
+    setText(spmEl, snap.spm ? snap.spm.toFixed(0) : "—");
+    setText(
+      catchSpreadEl,
+      snap.last?.catchSpreadMs != null ? fmtMs(snap.last.catchSpreadMs) : "—"
+    );
+    setText(
+      finishSpreadEl,
+      snap.last?.finishSpreadMs != null ? fmtMs(snap.last.finishSpreadMs) : "—"
+    );
+    setText(strokeCountEl, String(snap.totalMatched));
     const refSeat =
       snap.last?.seats.find((s) => s.id === snap.last.referenceId) || null;
     const liveArc = driveArcDeg(refSeat?.catch?.theta, refSeat?.finish?.theta);
-    if (arcLiveEl) arcLiveEl.textContent = fmtDeg(liveArc);
-    if (bladeLiveEl) bladeLiveEl.textContent = fmtM(bladeArcM(liveArc, rig.outboardM));
-    if (catchCueEl) {
-      const cue = coachCatchCue(snap.last, snap.thresholdMs);
-      catchCueEl.textContent = cue.text;
-      catchCueEl.className = `catch-cue ${cue.kind}`;
-    }
+    if (arcLiveEl) setText(arcLiveEl, fmtDeg(liveArc));
+    if (bladeLiveEl) setText(bladeLiveEl, fmtM(bladeArcM(liveArc, rig.outboardM)));
+    setCue(coachCatchCue(snap.last, snap.thresholdMs));
     renderAlignRail(snap.last, snap.thresholdMs);
     if (matchNoteEl) {
       const q = snap.last?.matchQuality;
@@ -583,19 +776,22 @@ try {
         untrusted_time: "Clock untrusted — in-sync hidden.",
         wide_spread: "Catch spread is hundreds of ms — check matcher / missing finish, not the crew.",
       };
-      matchNoteEl.textContent = notes[q] || "";
+      setText(matchNoteEl, notes[q] || "");
     }
     const live = liveSeats();
     const feat = live.find((s) => Number.isFinite(s.feather))?.feather;
-    if (featherLiveEl) {
-      featherLiveEl.textContent = feat != null ? fmtDeg(feat) : "—";
-    }
+    if (featherLiveEl) setText(featherLiveEl, feat != null ? fmtDeg(feat) : "—");
     const n = registry.list().filter((s) => s.status === "connected").length;
+    if (podCountEl && podCountLabel) {
+      setText(podCountLabel, n === 1 ? "1 pod" : `${n} pods`);
+      const liveAttr = n > 0 ? "1" : "0";
+      if (podCountEl.dataset.live !== liveAttr) podCountEl.dataset.live = liveAttr;
+    }
     btnDisconnect.disabled = n < 1;
     btnZero.disabled = n < 1;
     btnStart.disabled = n < 1 || pieceActive;
     btnStop.disabled = !pieceActive;
-    btnCsv.disabled = crew.snapshot().totalMatched < 1;
+    btnCsv.disabled = snap.totalMatched < 1;
   }
 
   function setButtons() {
@@ -654,7 +850,7 @@ try {
           ? "fused yaw (walks near iron)"
           : "v1 gyro";
       setStatus(
-        `${session.position} connected · ${motion}. Assign a seat, hold perpendicular, Zero.`,
+        `${session.position} connected · ${motion}. Assign a seat, then row. Zero only for measured degrees.`,
         session.client.usesFusedMotion ? "err" : "ok"
       );
     } catch (e) {
@@ -674,7 +870,7 @@ try {
 
   btnZero.addEventListener("click", () => {
     for (const tr of trackers.values()) tr.zero();
-    setStatus("Zeroed at perpendicular. Start the piece when ready.", "ok");
+    setStatus("Measured zero at this pose. Degrees are from here, not the auto centre.", "ok");
   });
 
   btnStart.addEventListener("click", () => {
@@ -727,7 +923,7 @@ try {
   requestAnimationFrame(raf);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=1.4.4").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=1.5.1").catch(() => {});
   }
   setStatus("Ready — add a pod per oar (Android Chrome / desktop Chrome).");
 } catch (e) {

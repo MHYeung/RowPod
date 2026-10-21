@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
 #include "sensor_protocol.h"
 
 #ifdef __cplusplus
@@ -30,7 +31,7 @@ bool sensor_stream_is_enabled(void);
  *
  * The I2C-owning task applies the change asynchronously. Query
  * sensor_stream_get_applied_rate_hz() / is_rate_applied() for confirmation.
- * 448 Hz IMU is paired with 100 Hz mag (~10 ms heading correction).
+ * RowPod v2 has no magnetometer; the applied rate is the IMU ODR only.
  * Safe from BLE callbacks.
  */
 esp_err_t sensor_stream_set_rate_hz(uint16_t rate_hz);
@@ -38,14 +39,27 @@ esp_err_t sensor_stream_set_rate_hz(uint16_t rate_hz);
 /** @brief Last requested rate (may not yet be applied by hardware). */
 uint16_t sensor_stream_get_rate_hz(void);
 
-/** @brief Rate confirmed by the last successful IMU+MAG ODR update. */
+/** @brief Rate confirmed by the last successful IMU ODR update. */
 uint16_t sensor_stream_get_applied_rate_hz(void);
 
 /** @brief True when requested and applied rates match and no dirty request is pending. */
 bool sensor_stream_is_rate_applied(void);
 
-/** @brief Magnetometer ODR corresponding to the applied IMU profile. */
+/**
+ * @brief Magnetometer ODR advertised to the host.
+ *
+ * RowPod v2 has no magnetometer, so this is always 0. Hosts treat 0 as
+ * "no mag" (v1 firmware reports 50, 100, or 200).
+ */
 uint8_t sensor_stream_get_mag_rate_hz(void);
+
+/**
+ * @brief Ask the I2C-owning task to power the IMU down, then wait.
+ *
+ * Does not call I2C itself. On ESP_OK the stream task is parked and the IMU
+ * oscillator is off. On failure the stream task keeps running.
+ */
+esp_err_t sensor_stream_prepare_sleep(TickType_t timeout);
 
 /**
  * @brief Register callback invoked after each DRDY-qualified sample.

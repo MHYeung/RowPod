@@ -16,6 +16,15 @@ boundaries and diagnostics.
 Read-only capabilities live at `…2009` (20 B) and advertise supported formats,
 rate mask, max batch frames, IMU/MAG ODRs, ATT MTU, and queue depth.
 
+Byte 6 `mag_rate_hz` is 50, 100, or 200 on v1 pods and **0 on RowPod v2**
+(no magnetometer). Hosts use `mag_rate_hz > 0` as `hasMag`. Do not add a
+capability flag for this: v1 pods that are never reflashed would not set it.
+Byte 7 `hw_rev` was reserved and is 0 on v1 firmware; hosts read 0 as hardware
+v1. v2 firmware writes 2. Motion frames stay the same size; v2 mag fields are
+zero. A v2 deep-sleep wake resets the chip, so `sample_index` starts again at 0
+and capture state does not survive sleep. Hosts treat every connection as a
+new clock.
+
 ## GATT characteristics (additive)
 
 ### Motion

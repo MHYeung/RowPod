@@ -424,6 +424,8 @@ export function decodeCaps(view) {
   }
   const featureFlags = view.getUint8(1);
   const rateMask = view.getUint8(2);
+  const magRateHz = view.getUint8(6);
+  const hwRevRaw = view.getUint8(7);
   return {
     ver: view.getUint8(0),
     featureFlags,
@@ -431,7 +433,10 @@ export function decodeCaps(view) {
     maxBatchFrames: view.getUint8(3),
     maxRateHz: rateFromWire(view.getUint8(4)),
     imuRateHz: rateFromWire(view.getUint8(5)),
-    magRateHz: view.getUint8(6),
+    magRateHz,
+    /* Byte 7 was reserved and is 0 on every v1 pod. 0 means legacy v1. */
+    hwRev: hwRevRaw === 0 ? 1 : hwRevRaw,
+    hasMag: magRateHz > 0,
     attMtu: view.getUint16(8, true),
     queueDepthMax: view.getUint16(10, true),
     firmwareProto: view.getUint16(12, true),

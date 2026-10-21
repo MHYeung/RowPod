@@ -5,24 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#392d37" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <title>RowPod 1.4.4</title>
+  <title>RowPod 1.5.1</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="overtec-mark.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="rowpod.css?v=1.4.4" />
+  <link rel="stylesheet" href="rowpod.css?v=1.5.1" />
 </head>
 <body>
   <header>
     <div class="brand">
-      <h1>RowPod <span data-rowpod-version>1.4.4</span></h1>
-      <p class="sub">Oar arc, blade length, and catch timing</p>
+      <img class="mark" src="overtec-mark.svg" alt="" width="36" height="36" />
+      <div>
+        <h1>RowPod <span data-rowpod-version>1.5.1</span></h1>
+        <p class="sub">Oar arc, blade length, and catch timing</p>
+      </div>
     </div>
-    <a class="lab-link" href="./lab.html">IMU lab</a>
+    <div class="header-side">
+      <span id="podCount" class="pod-pill" data-live="0">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="podCountLabel">0 pods</span>
+      </span>
+      <a class="lab-link" href="./lab.html">IMU lab</a>
+    </div>
   </header>
 
   <section class="controls">
     <button id="btnAddPod" type="button">Add pod</button>
     <button id="btnDisconnect" type="button" disabled>Disconnect</button>
-    <button id="btnZero" type="button" disabled>Zero</button>
+    <button id="btnZero" type="button" disabled>Zero (measured)</button>
     <button id="btnStart" type="button" disabled>Start piece</button>
     <button id="btnStop" type="button" disabled>Stop</button>
     <button id="btnCsv" type="button" disabled>Stroke CSV</button>
@@ -110,6 +119,7 @@
           <th>vs stroke</th>
           <th>Δ finish</th>
           <th>Clock</th>
+          <th>Drive</th>
         </tr>
       </thead>
       <tbody id="seatRows"></tbody>
@@ -120,14 +130,16 @@
 
   <p class="footnote">
     Mount the pod on the oar shaft inboard of the gate. Pick boat class, then
-    seat and stroke-side vs bow-side. Hold squared and perpendicular, then tap
-    Zero. Type pin-to-blade (outboard) before the piece. Arc is finish minus
+    seat and stroke-side vs bow-side, and row. The first stroke centres the
+    fan; catch and finish degrees are estimates (~). Tap Zero (measured) only
+    when you need degrees from a squared perpendicular pose. Type pin-to-blade
+    (outboard) before the piece. Arc is finish minus
     catch; blade metres use outboard. Feather Δt is the roll after finish vs
     stroke — blank if the blade never crossed 45° or if feather tracks the fan.
     In-sync needs two seats with a catch and a finish. iPhone Safari cannot use
     Web Bluetooth.
   </p>
 
-  <script type="module" src="rowpod.js?v=1.4.4"></script>
+  <script type="module" src="rowpod.js?v=1.5.1"></script>
 </body>
 </html>

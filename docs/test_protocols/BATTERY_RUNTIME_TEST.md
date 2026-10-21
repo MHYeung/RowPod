@@ -40,13 +40,14 @@ defined cutoff and recharge under supervision.
 
 Run every mode at least three times:
 
-1. Advertising idle, disconnected, until its light-sleep policy engages.
+1. Advertising idle, disconnected, until its deep-sleep policy engages.
+   Unplug USB first. A host on USB-Serial/JTAG keeps the pod awake.
 2. Connected live monitor at 56 Hz.
 3. One connected pod, continuous 224 Hz logging.
 4. Two connected pods, continuous 112 Hz logging per pod.
 
 The browser status logger only covers connected modes. Use the external meter
-and manual timestamps for advertising/light-sleep testing.
+and manual timestamps for advertising/deep-sleep testing.
 
 ## Pre-test controls
 
@@ -106,3 +107,32 @@ were capacity curves. The higher-load mode can show a lower voltage from
 internal resistance even at the same remaining charge. Use runtime and
 externally integrated current for power decisions; use the dashboard CSV to
 explain whether a runtime change coincides with BLE or sensor degradation.
+
+## Deep-sleep current (v2)
+
+Measure this on the battery lead with USB unplugged. A USB host keeps the
+firmware awake, and USB-Serial/JTAG is off once the chip is actually asleep.
+
+Add these datasheet figures, then compare the meter to the sum:
+
+| Contributor | Where to read it |
+|-------------|------------------|
+| ESP32-C3 deep-sleep current | Datasheet current-consumption table, deep-sleep row |
+| XC6220 quiescent current | XC6220 electrical characteristics, Iq |
+| Battery divider | 4.2 V / (470 kΩ + 470 kΩ) ≈ 4.5 µA |
+| QMI8658A power-down | Supply-current table, power-down / SensorDisable row (a few µA) |
+| TP4056, not charging | Battery-pin quiescent current |
+
+A reading of hundreds of microamps, or about a milliamp, means something is
+still running. The usual cause is the IMU left in 6-DoF mode.
+
+Wake checks on the same setup:
+
+1. Short press: the pod stays asleep and does not advertise.
+2. Hold GPIO0 for 2 s: the pod boots and advertises.
+3. Keep holding through the moment sleep starts: it must not reboot in a loop.
+   The wake is level-low, so firmware waits for release before arming it.
+
+Download-mode check, from the ESP32-C3 strapping-pin section: GPIO2 (battery
+divider at VBAT/2) and GPIO8 (IMU INT1) are strapping pins. With a battery
+fitted, GPIO9 held low plus RST must still enter the serial download boot.

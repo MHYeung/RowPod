@@ -14,36 +14,36 @@ debugging hardware; the production app wires UI + sensors + BLE together.
 
 | Function | GPIO |
 |----------|------|
-| Green LED | 6 |
-| Blue LED | 7 |
-| User button (active-low) | 10 |
+| Blue LED (active high) | 7 |
+| User button (active-low, deep-sleep wake) | 0 |
 | Battery ADC | 2 |
 | I²C SDA / SCL | 4 / 5 |
 | IMU INT1 / INT2 | 8 / 3 |
 
-QMI8658A @ `0x6A` (WHO_AM_I `0x05`), QMC5883P @ `0x2C` (CHIPID `0x80`).
+QMI8658A @ `0x6A` (WHO_AM_I `0x05`). RowPod v2 does not fit a magnetometer.
+The orange LED is the TP4056 charge indicator and is not driven by the MCU.
 
-## Status LEDs
+## Status LED
 
-| State | Green | Blue |
-|-------|-------|------|
-| Advertising / waiting | Off | LEDC breathing, 2 s period |
-| Connected | Off | Dim blue |
-| Streaming notifications | Off | Dim blue |
-| Light sleep | Off | Off |
+| State | Blue (GPIO7) |
+|-------|----------------|
+| Advertising / waiting | LEDC breathing, 2 s period |
+| Connected | Dim |
+| Streaming notifications | Dim |
+| Deep sleep | Held off |
 
 ## Application flow (current)
 
 1. `device_config_init` — load name / pod id from NVS
 2. `ui_init` — LEDs + debounced button gesture task
-3. `sensor_stream_init` — I²C bus, IMU/mag init, INT2 DRDY task
+3. `sensor_stream_init` — I²C bus, IMU init, INT2 DRDY task
 4. `ble_tracker_init` — NimBLE advertise motion + config services
 5. Client enables notifications on motion data → streaming starts
 6. Dashboard may write position name / request software sync
 7. Every pod advertises as a fixed single-node peripheral with a unique pod name
 8. The host may connect one or multiple pods using repeated **Add pod** actions
-9. No connection for three minutes → BLE stops and light sleep waits for GPIO10
-10. A short wake press is ignored; hold GPIO10 for 2 s, release, and advertising resumes
+9. No connection for three minutes → BLE stops, the IMU powers down, and the chip enters deep sleep. USB-Serial/JTAG is gone until the next boot.
+10. A short press on GPIO0 is ignored (the chip boots, rejects the press, and sleeps again). Hold GPIO0 for 2 s and advertising starts. Deep sleep resets `sample_index` to 0.
 11. In a connected pod, single-tap pauses/resumes the BLE sensor stream
 
 ## Multi-pod validation checklist
@@ -51,7 +51,7 @@ QMI8658A @ `0x6A` (WHO_AM_I `0x05`), QMC5883P @ `0x2C` (CHIPID `0x80`).
 1. Boot one pod; confirm blue breath and advertised name.
 2. Confirm the pod advertises with a unique `C3-T-XXXX` name.
 3. Power-cycle; confirm pod id/name persist from NVS.
-4. Enter light sleep; short-tap and confirm it remains asleep; hold 2 s and release.
+4. Enter deep sleep; short-tap and confirm it stays asleep; hold GPIO0 for 2 s and confirm it advertises. Unplug USB before this check, or the idle policy stays awake.
 5. Web: Add pod → enable notify → single-tap and verify frames stop/resume.
 6. Two pods: overlay traces, per-pod rates/gaps, CSV includes `position`/`synced_ms`.
 7. Optional four-pod stress: watch for rising seq gaps / UI lag.
@@ -74,7 +74,8 @@ Open `http://localhost:8080/lab.html?v=16.8` in Chrome/Edge (not `file://`). Har
 
 ## Documentation checkpoints
 
-- ESP-IDF I2C master + NimBLE GATT notify / NVS / light-sleep GPIO wake
-- QMI8658A / QMC5883P datasheets (identity, output registers, scales)
+- ESP-IDF I2C master + NimBLE GATT notify / NVS / deep-sleep GPIO wake (`esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown`, GPIO0–5 on the C3)
+- QMI8658A datasheet (WHO_AM_I, CTRL1 SensorDisable, CTRL7, supply-current table)
+- ESP32-C3 datasheet "Strapping Pins": GPIO2 (battery divider) and GPIO8 (IMU INT1) must still allow GPIO9+RST download mode with a battery fitted
 - Chrome Web Bluetooth secure context (`localhost` or HTTPS)
 - Software sync accuracy is visual/ms-scale only

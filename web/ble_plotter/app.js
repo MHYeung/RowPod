@@ -345,7 +345,9 @@ try {
       : `idle (live ${RATE_LIVE_HZ} Hz)${drop}`;
     btnLogStart.disabled = n < 1 || logger.recording || stopPending;
     btnLogStop.disabled = n < 1 || !logger.recording || stopPending;
-    btnMagCal.disabled = n < 1 || logger.recording || magCalRunning || stopPending;
+    const selCaps = registry.selected?.caps || registry.selected?.client?.caps;
+    btnMagCal.disabled =
+      n < 1 || !selCaps?.hasMag || logger.recording || magCalRunning || stopPending;
     btnHyroxStart.disabled = n < 1 || hyrox.active || logger.recording;
     btnHyroxStop.disabled = !hyrox.active;
     btnLogDownload.disabled = logger.rowCount < 1;
@@ -679,10 +681,15 @@ try {
     gapsEl.textContent = String(sel.gaps || 0);
     const m = sel.client.meta;
     const batt = battLabel(sel.battery);
-    const magState = magCal.get(sel.id) ? "mag=calibrated" : "mag=RAW";
+    const caps = sel.caps || sel.client.caps;
+    const hasMag = Boolean(caps?.hasMag);
+    const magState = hasMag
+      ? magCal.get(sel.id) ? "mag=calibrated" : "mag=RAW"
+      : "mag=none";
+    const hw = caps?.hwRev ? `hw=v${caps.hwRev} · ` : "";
     metaEl.textContent =
       `${sel.position} · mode=${sel.mode ? "multi" : "single"} · ${batt} · ` +
-      `${magState} · a=${m.accel_lsb_per_g} LSB/g  ` +
+      `${hw}${magState} · a=${m.accel_lsb_per_g} LSB/g  ` +
       `g=${m.gyro_lsb_per_dps} LSB/dps  m=${m.mag_lsb_per_gauss} LSB/G`;
   }
 
@@ -703,8 +710,14 @@ try {
     updateStatusTestUi();
   };
 
+  function sessionHasMag(session) {
+    const caps = session?.caps || session?.client?.caps;
+    return Boolean(caps?.hasMag);
+  }
+
   registry.onFrame = (session, frame, syncedMs, quality) => {
-    magCal.observe(session.id, frame.eng);
+    const hasMag = sessionHasMag(session);
+    if (hasMag) magCal.observe(session.id, frame.eng);
     const cleanFrame = { ...frame, eng: quality?.eng || frame.eng };
     hyrox.update(session, cleanFrame.eng);
     /* Keep plot density near live rate even while the pod streams at log rate. */
@@ -714,7 +727,7 @@ try {
     if (session._plotTick % keepEvery === 0) {
       plotAccel.pushSeries(session.id, cleanFrame.eng);
       plotGyro.pushSeries(session.id, cleanFrame.eng);
-      plotMag.pushSeries(session.id, cleanFrame.eng);
+      if (hasMag) plotMag.pushSeries(session.id, cleanFrame.eng);
     }
 
     if (registry.selectedId === session.id) {
@@ -727,10 +740,14 @@ try {
           cleanFrame.quat.qz
         );
         cube.setAttitude(att.roll, att.pitch, att.yaw);
-      } else {
+      } else if (hasMag) {
         const { mx, my, mz } = magCal.apply(session.id, cleanFrame.eng);
         const att = attitudeFromSensors(ax, ay, az, mx, my, mz);
         cube.setAttitude(att.roll, att.pitch, att.yaw);
+      } else {
+        const roll = Math.atan2(ay, az);
+        const pitch = Math.atan2(-ax, Math.hypot(ay, az) || 1e-6);
+        cube.setAttitude(roll, pitch, 0);
       }
       rateEl.textContent = String(session.rate || 0);
       gapsEl.textContent = String(session.gaps || 0);
@@ -884,6 +901,10 @@ try {
   btnMagCal.addEventListener("click", async () => {
     const sel = registry.selected;
     if (!sel || magCalRunning) return;
+    if (!sessionHasMag(sel)) {
+      setStatus("This pod has no magnetometer", "err");
+      return;
+    }
     magCalRunning = true;
     magCal.start(sel.id);
     updateLogUi();

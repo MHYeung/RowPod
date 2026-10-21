@@ -158,6 +158,14 @@ static inline uint16_t sensor_proto_rate_from_wire(uint8_t wire)
 #define SENSOR_PROTO_FLAG_MULTI     0x0001
 
 /**
+ * caps.hw_rev (formerly reserved0). v1 firmware memset this byte to 0.
+ * Hosts treat 0 as legacy v1 hardware. Do not add a HAS_MAG feature flag:
+ * pods that stay on v1 firmware would never set it.
+ */
+#define SENSOR_PROTO_HW_REV_V1_LEGACY  0
+#define SENSOR_PROTO_HW_REV_V2         2
+
+/**
  * @brief Shared internal sample (host and firmware).
  *
  * sample_index is a monotonic 32-bit IMU clock; the legacy 16-bit wire seq is
@@ -283,8 +291,9 @@ _Static_assert(sizeof(sensor_proto_meta_t) == SENSOR_PROTO_META_LEN, "meta size"
  * @brief Read-only capability snapshot for host preflight.
  *
  * Wire (20 B): ver, feature_flags, rate_mask, max_batch_frames, max_rate_hz,
- * imu_rate_hz, mag_rate_hz, reserved0, att_mtu(u16), queue_depth_max(u16),
+ * imu_rate_hz, mag_rate_hz, hw_rev, att_mtu(u16), queue_depth_max(u16),
  * firmware_proto(u16), reserved1(u16), reserved2(u32).
+ * mag_rate_hz == 0 means the board has no magnetometer. hw_rev 0 is a v1 pod.
  */
 typedef struct __attribute__((packed)) {
     uint8_t ver;
@@ -294,7 +303,7 @@ typedef struct __attribute__((packed)) {
     uint8_t max_rate_hz;
     uint8_t imu_rate_hz;
     uint8_t mag_rate_hz;
-    uint8_t reserved0;
+    uint8_t hw_rev; /**< SENSOR_PROTO_HW_REV_*; 0 on legacy v1 firmware */
     uint16_t att_mtu;
     uint16_t queue_depth_max;
     uint16_t firmware_proto;

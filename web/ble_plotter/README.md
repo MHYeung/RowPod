@@ -7,7 +7,7 @@ Portrait coach UI for oar-mounted C3-Tracker pods. Chrome/Edge only
 
 GitHub Pages on the private Pro repo (static `web/ble_plotter/` only):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.5.1`
 
 Setup: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
 Coach/athlete map: [`docs/ROWPOD_ECOSYSTEM.md`](../../docs/ROWPOD_ECOSYSTEM.md).
@@ -19,17 +19,17 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open **http://localhost:8080/?v=1.4.4** (not `file://`). Hard-refresh if the
-header is not **1.4.4**. Installed PWAs must be deleted and re-added when
-the cache name changes (`rowpod-1.4.4`).
+Open **http://localhost:8080/?v=1.5.1** (not `file://`). Hard-refresh if the
+header is not **1.5.1**. Installed PWAs must be deleted and re-added when
+the cache name changes (`rowpod-1.5.1`).
 
 Old `/rowpod.html` bookmarks redirect here.
 
 ## Coach flow
 
-1. **Add pod** once per oar (2–4 links on one phone).
+1. **Add pod** once per oar (up to 6 links on one phone).
 2. Set boat class, Stroke sits, seat, and hand. Type inboard / outboard (cm).
-3. Hold squared and perpendicular, tap **Zero**.
+3. Row. The first stroke centres the fan. Tap **Zero (measured)** only when you need degrees from a squared perpendicular pose.
 4. **Start piece** → row → **Stop** → **Stroke CSV**.
 
 In-sync % stays empty until two seats have a catch and a finish on a trusted

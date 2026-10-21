@@ -124,6 +124,20 @@ esp_err_t qmi8658_set_odr_for_rate(uint16_t rate_hz)
     return ESP_OK;
 }
 
+esp_err_t qmi8658_power_down(void)
+{
+    ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not ready");
+    /* Datasheet CTRL7 then CTRL1: sensors off, then SensorDisable (bit0)
+     * gates the internal oscillator. Power-down current is a few microamps;
+     * leaving 6-DoF mode running would dominate deep-sleep current. */
+    ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL7, 0x00), TAG, "CTRL7 off");
+    ESP_RETURN_ON_ERROR(i2c_bus_write_reg(s_dev, REG_CTRL1, (uint8_t)(CTRL1_VAL | 0x01)),
+                        TAG, "CTRL1 disable");
+    s_ready = false;
+    ESP_LOGI(TAG, "power-down: CTRL7=0, CTRL1 SensorDisable (oscillator off)");
+    return ESP_OK;
+}
+
 esp_err_t qmi8658_get_scale(qmi8658_scale_t *out)
 {
     ESP_RETURN_ON_FALSE(s_ready && out, ESP_ERR_INVALID_STATE, TAG, "bad state");

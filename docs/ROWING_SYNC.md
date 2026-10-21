@@ -104,22 +104,43 @@ accepts that until wrap (~20 min at 56 Hz).
 
 ## Zeroing
 
-1. Mount the pod on the shaft, LED side in a repeatable orientation.
-2. Square the blade. Hold the oar **perpendicular** to the boat.
-3. Tap **Zero**. That sample becomes 0° oar angle and 0° feather (squared).
-4. Pick **boat class** (2x … 8+) and **Stroke sits** (port or starboard).
-   Assign each pod a **seat** and **stroke-side vs bow-side**. Sweep seats
-   auto-fill the hand (stroke, 6, 4, 2 on stroke-side; 7, 5, 3, bow on
-   bow-side). Scull defaults both blades to stroke-side so two scullers
-   overlay; switch a pod to bow-side if it is on the other gunwale.
-   Port/starboard for the gyro sign is derived from hand + Stroke sits.
-   Catch is still negative toward the **bow of the boat**, on both hands,
-   so the fan overlays instead of mirroring.
+Connect and row. The pod has no absolute heading (no magnetometer, and the
+pin is nearly vertical), so perpendicular is inferred from the stroke:
 
-Re-zero if a pod is remounted or the piece is long enough that residual gyro
-bias (clamped to ±5 deg/s, estimated from catch-to-catch walk) has eaten the
-absolute scale. Arc length (finish − catch) is robust to a slow walk; the
-absolute catch number is not.
+1. Mount the pod on the shaft, LED side in a repeatable orientation.
+2. Pick **boat class** (2x … 8+) and **Stroke sits**, then assign each pod a
+   **seat** and **stroke-side vs bow-side**. Sweep seats auto-fill the hand
+   (stroke, 6, 4, 2 on stroke-side; 7, 5, 3, bow on bow-side). Scull defaults
+   both blades to stroke-side so two scullers overlay; switch a pod to
+   bow-side if it is on the other gunwale. Port/starboard for the gyro sign
+   comes from hand + Stroke sits. Catch stays negative toward the **bow of
+   the boat** on both hands, so the fan overlays instead of mirroring.
+3. The first complete stroke centres that seat's arc on a nominal midpoint
+   (sweep −12°, scull −10°) and sets feather 0° from the squared drive.
+   Catch and finish **degrees** are estimates (`angle_ref=auto` in the CSV,
+   `~` in the table). Timing, in-sync, SPM, and arc do not use this guess.
+4. **Zero (measured)** is optional. Square the blade, hold the oar
+   **perpendicular**, and tap it when you need degrees from that pose
+   (`angle_ref=zero`). It replaces the auto centre for that pod.
+
+Auto-centre puts every seat on the same midpoint. Arc length still shows who
+is short. It cannot tell a catch that is short and a finish that is long
+from an arc that is merely shifted. That split needs a measured Zero.
+
+Re-zero if a pod is remounted. From 1.5.1 the host estimates gyro bias
+(still periods, and stroke-to-stroke walk, clamped to ±5 deg/s) and
+propagates gravity with the gyro instead of a fast accelerometer low-pass.
+The midpoint lock is gentler (20% of the error per drive) so a real change
+in where the arc sits is not pulled back on the next stroke.
+
+**SPM** on the headline and in the `spm` column is one stroke:
+60000 / (this reference catch − the previous one). A gap under 600 ms or
+over 6 s is blank. `spm_avg5` is the older mean of up to five gaps.
+
+**Drive index** is unitless. 100 means "about like this seat's first strokes
+of the piece". It is the sum of ω² over the drive. It is not watts: the pod
+never sees pin force, and on a bench the true power is about zero. Tip speed
+(`tip_speed_mps`) is |peak ω| × outboard, a kinematic speed.
 
 ## Accuracy budget (honest)
 
@@ -192,7 +213,7 @@ the stroke is not rated (single seat, missing finish, or untrusted clock).
 
 | Path | Role |
 |------|------|
-| `docs/ROWPOD_NEXT.md` | Next host slices 1.5–1.6 (1.4 Honest Crew Clock shipped) |
+| `docs/ROWPOD_NEXT.md` | Next host slice 1.6 feather flags (1.5 connect-and-go shipped) |
 | `web/ble_plotter/index.html` | RowPod PWA (site root) |
 | `web/ble_plotter/lab.html` | IMU lab (plots, HYROX, mag-cal) |
 | `web/ble_plotter/timebase.js` | `sample_index` → host ms |

@@ -307,8 +307,10 @@ export class BleClient {
       /* RowPod prefers v16 raw gyro. Fused Mahony yaw follows the magnetometer
        * and will walk the oar fan even after a relative-Zero. */
       this.preferRawGyro = Boolean(options.preferRawGyro);
+      /* v2 Mahony has no magnetometer, so its yaw drifts. Prefer v16 raw gyro. */
       this.usesFusedMotion = Boolean(
         !this.preferRawGyro &&
+          this.caps?.hasMag &&
           this.dataFusedChar &&
           this.caps?.supportsFused &&
           attMtu >= 27

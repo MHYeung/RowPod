@@ -153,6 +153,15 @@ export function saveRig(rig) {
   );
 }
 
+/**
+ * Where a typical arc sits relative to perpendicular.
+ * Sweep ballpark is catch −60° and finish +35°. Scull is a little shorter.
+ * Auto-centre parks every seat on this midpoint. It is not a measured Zero.
+ */
+export function nominalArcCentreDeg(kind) {
+  return kind === "scull" ? -10 : -12;
+}
+
 /** Fill scull/sweep defaults unless the coach typed spans. */
 export function rigWithBoatClass(rig, boatClassId) {
   const boatClass = getBoatClass(boatClassId).id;

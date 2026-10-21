@@ -2,8 +2,9 @@
 
 > gstack ESP-IDF project — modular, fast, embedded-first.
 
-Athletic / portable tracker on **ESP32-C3FH4** with QMI8658A IMU, QMC5883P
-magnetometer, CA-C03 chip antenna, and a local Web Bluetooth plotter.
+Athletic / portable tracker on **ESP32-C3FH4** with a QMI8658A IMU,
+CA-C03 chip antenna, and a local Web Bluetooth plotter. RowPod v2 has no
+magnetometer.
 
 ## Requirements
 
@@ -49,7 +50,8 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 - The default advertised name is unique: `C3-T-XXXX` (stable pod id from NVS/MAC).
 - The dashboard host selects one or multiple pods by using **Add pod** for each
   device; no device-side mode switch is required.
-- Hold GPIO10 for ~2 s in light sleep to wake; a shorter wake press is ignored.
+- After three minutes with no BLE link the pod enters deep sleep. Hold GPIO0
+  for ~2 s to boot again; a shorter press is ignored and the pod stays asleep.
 - In a connected pod, single-tap pauses/resumes the BLE sensor stream.
 - Dashboard rename writes the position name into the pod NVS and becomes the
   BLE advertised name (max 20 chars). Motion service UUIDs stay fixed.
@@ -68,15 +70,14 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 │   ├── device_config/    NVS name, pod id, oar side/zero, fixed single-node identity
 │   ├── i2c_bus/          Single I2C master owner
 │   ├── qmi8658/          IMU driver
-│   ├── qmc5883p/         Magnetometer driver
-│   ├── mahony/           On-device AHRS (gyro + accel + mag yaw)
+│   ├── mahony/           On-device AHRS (gyro + accel; yaw is not mag-corrected)
 │   ├── sensor_protocol/  BLE wire frames (v1 / v16 / fused / coach summary) + UUIDs
 │   ├── rowing_metrics/   On-pod catch/finish/arc (port of the browser tracker)
 │   ├── sensor_stream/    Native-clock 56/112/224/448 Hz DRDY stream + Mahony
 │   ├── ble_tracker/      NimBLE peripheral + queued packet batching / drain
-│   ├── ui/               Status LEDs + button gestures
+│   ├── ui/               Blue status LED + button gestures
 │   ├── battery/          ADC oneshot on GPIO2 → pack mV / %
-│   └── power/            Three-minute light-sleep policy
+│   └── power/            Three-minute deep-sleep policy (GPIO0 wake)
 └── web/ble_plotter/      Local Web Bluetooth UI
 ```
 

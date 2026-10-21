@@ -8,10 +8,18 @@ extern "C" {
 #endif
 
 /**
- * @brief Initialize the three-minute BLE idle light-sleep policy.
+ * @brief Reject a short button wake before the rest of app_main runs.
  *
- * GPIO wake is qualified as a continuous two-second button hold before BLE
- * advertising resumes.
+ * Deep sleep resets the chip, so the two-second hold is measured here, not in
+ * the power task. A press that is already released returns to deep sleep.
+ * Call this before NVS, BLE, or sensor init.
+ */
+void power_boot_gate(void);
+
+/**
+ * @brief Arm the three-minute BLE-idle deep-sleep policy.
+ *
+ * Wake is GPIO0 low. The hold is qualified by power_boot_gate() on the next boot.
  */
 esp_err_t power_init(void);
 

@@ -223,7 +223,7 @@ export class CsvLogger {
       );
       if (p.caps) {
         lines.push(
-          `# pod${i}_caps=mtu:${p.caps.attMtu ?? ""};max_batch:${p.caps.maxBatchFrames ?? ""};imu:${p.caps.imuRateHz ?? ""};mag:${p.caps.magRateHz ?? ""}`
+          `# pod${i}_caps=mtu:${p.caps.attMtu ?? ""};max_batch:${p.caps.maxBatchFrames ?? ""};imu:${p.caps.imuRateHz ?? ""};mag:${p.caps.magRateHz ?? ""};hw:${p.caps.hwRev ?? ""}`
         );
       }
       if (p.magCalibration) {

@@ -7,12 +7,16 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "ui";
 static QueueHandle_t s_state_q;
 static ui_button_event_cb_t s_button_event_cb;
 static volatile bool s_gestures_enabled;
+/* Separate from any caller task notification: power.c already uses its own. */
+static StaticSemaphore_t s_led_ack_buf;
+static SemaphoreHandle_t s_led_ack;
 
 enum {
     BREATH_STEPS = 64,
@@ -40,8 +44,6 @@ static void set_led_duty(ledc_channel_t channel, uint32_t duty)
 
 static void apply_state(ui_state_t state)
 {
-    /* Green stays off once linked — saves pack current for ADC/runtime. */
-    set_led_duty(LEDC_CHANNEL_1, 0);
     if (state == UI_STATE_CONNECTED || state == UI_STATE_STREAMING) {
         set_led_duty(LEDC_CHANNEL_0, LED_LINK_DUTY);
     } else if (state != UI_STATE_WAITING) {
@@ -118,6 +120,13 @@ static void ui_task(void *arg)
             state = requested;
             phase = 0;
             apply_state(state);
+            if (state == UI_STATE_SLEEP) {
+                /* Idle level 0 leaves the active-high LED off for the pad hold. */
+                ESP_ERROR_CHECK(ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0));
+                if (s_led_ack) {
+                    xSemaphoreGive(s_led_ack);
+                }
+            }
         } else if (state == UI_STATE_WAITING) {
             set_led_duty(LEDC_CHANNEL_0, breath_duty(phase++ % BREATH_STEPS));
         }
@@ -136,7 +145,7 @@ static void init_status_led_pwm(void)
     };
     ESP_ERROR_CHECK(ledc_timer_config(&timer));
     ledc_channel_config_t channel = {
-        .gpio_num = BOARD_LED_BLUE_GPIO,
+        .gpio_num = BOARD_LED_GPIO,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = LEDC_CHANNEL_0,
         .intr_type = LEDC_INTR_DISABLE,
@@ -144,9 +153,6 @@ static void init_status_led_pwm(void)
         .duty = 0,
         .hpoint = 0,
     };
-    ESP_ERROR_CHECK(ledc_channel_config(&channel));
-    channel.gpio_num = BOARD_LED_GREEN_GPIO;
-    channel.channel = LEDC_CHANNEL_1;
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
 }
 
@@ -165,8 +171,21 @@ esp_err_t ui_init(void)
 
     s_state_q = xQueueCreate(1, sizeof(ui_state_t));
     ESP_RETURN_ON_FALSE(s_state_q, ESP_ERR_NO_MEM, TAG, "state queue");
+    s_led_ack = xSemaphoreCreateBinaryStatic(&s_led_ack_buf);
+    ESP_RETURN_ON_FALSE(s_led_ack, ESP_ERR_NO_MEM, TAG, "led ack");
     BaseType_t ok = xTaskCreate(ui_task, "ui", 2048, NULL, 4, NULL);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "task");
+    return ESP_OK;
+}
+
+esp_err_t ui_prepare_sleep(void)
+{
+    ESP_RETURN_ON_FALSE(s_led_ack, ESP_ERR_INVALID_STATE, TAG, "no led ack");
+    (void)xSemaphoreTake(s_led_ack, 0);
+    ESP_RETURN_ON_ERROR(ui_set_state(UI_STATE_SLEEP), TAG, "sleep state");
+    if (xSemaphoreTake(s_led_ack, pdMS_TO_TICKS(500)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
     return ESP_OK;
 }
 

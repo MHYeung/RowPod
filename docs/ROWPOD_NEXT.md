@@ -1,11 +1,11 @@
 # RowPod — next development (ingested brief)
 
 **Ingested:** 1 September 2026 from `AGENT_PROMPT_ROWPOD_NEXT.md`.  
-**Current ship:** host **1.4.4** (RowPod is the Pages root; IMU lab at `lab.html`).
-Angle, arc, blade metres, and gated feather-on are unchanged from 1.4.3.
-1.4.4 is not the full 1.5 shaft-axis / wash slice. Do not flash firmware for
-this minor. Next named slice is **1.5** only when the human names the rest of
-blade-work.
+**Current ship:** host **1.5.0** (connect and go). The first complete stroke
+centres the fan on a nominal rig midpoint. Zero is optional and measured.
+Angle timing, arc, blade metres, and gated feather-on are unchanged.
+Do not flash firmware for this minor. Next named slice is **1.6 Feather +
+blade flags**, only when the human names it.
 
 ## Human gate (this repo)
 
@@ -13,7 +13,8 @@ blade-work.
 |------|--------|
 | 1.3.0 boat class + **Stroke sits** + per-seat **hand** | Shipped. Overlay confirmed on water (2 September 2026 2x CSVs: both catches negative / finishes positive). |
 | Host **1.4 Honest Crew Clock** | Shipped in `version.js` 1.4.0. Water CSV still needed to confirm the matcher (no 500 ms alias, empty `in_sync` when a finish is missing). |
-| Host **1.5 Feather + blade flags** | Next *software* slice. Do not start until the human says so. |
+| Host **1.5 Connect and go** | Shipped. First stroke centres the fan. Zero is measured-only. |
+| Host **1.6 Feather + blade flags** | Next *software* slice. Do not start until the human says so. |
 | Firmware **major / v2** | **Owner decision only.** This 1.4 host slice does **not** start a firmware major. |
 
 **Product bet (do not dilute):** a crew that is 40 ms apart at the catch is
@@ -59,7 +60,7 @@ Deep learning is **out of scope** until slices 1 and 2 are boringly correct. If 
 
 Hardware / schematic context (do not redesign):
 
-- Pod: ESP32-C3FH4, QMI8658A IMU, QMC5883P mag, USB-C + TP4056, XC6220 3.3 V LDO.
+- Pod v2: ESP32-C3FH4, QMI8658A IMU (no magnetometer), USB-C + TP4056, XC6220 3.3 V LDO. Button is GPIO0. One blue LED on GPIO7.
 - Mount: oar shaft, **inboard of the gate**, repeatable LED orientation.
 - No strain / force sensor on V1. Never label a Y-axis in watts or newtons.
 
@@ -186,7 +187,7 @@ Patches = small detector/UI fixes. Minors = behaviour a coach notices. PWA cache
 
 ---
 
-### Slice B — Host 1.5: Feather axis + blade-work flags
+### Slice B — Host 1.6: Feather axis + blade-work flags
 
 Start only after Slice A tests pass.
 

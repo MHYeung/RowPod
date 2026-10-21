@@ -10,6 +10,7 @@ import {
   defaultHandForSeat,
   portStarboardFromHand,
   getBoatClass,
+  nominalArcCentreDeg,
   rigWithBoatClass,
 } from "./boat_rig.js";
 import { bladeArcM, driveArcDeg, defaultSpansForKind, spanCmToM } from "./rowing_length.js";
@@ -190,6 +191,7 @@ function catchTimes(ampUnused, spm, seconds) {
   assert(csv.includes("boat_class=8+"), "csv stamps boat class");
   assert(csv.split("\n").length > 10, "csv has seat rows");
   assert(csv.includes("match_quality"), "csv has match_quality");
+  assert(csv.includes("angle_ref"), "csv has angle_ref");
 }
 
 /* --- 1.4 match_forward_no_half_period_alias --- */
@@ -544,13 +546,25 @@ function catchTimes(ampUnused, spm, seconds) {
   );
   tracker.zero();
   assertNear(tracker.feather, 0, 1, "Zero squares feather");
-  for (let i = 1; i <= hz * 2; i++) {
+  /* A real shaft roll: gyro about X carries gravity. Accel agrees. */
+  for (let i = 1; i <= hz; i++) {
+    const phi = (i / hz) * (Math.PI / 2);
     tracker.update(
-      { protocol: 2, eng: { ax: 0, ay: 1, az: 0, gx: 0, gy: 0, gz: 0 } },
+      {
+        protocol: 2,
+        eng: {
+          ax: 0,
+          ay: Math.sin(phi),
+          az: Math.cos(phi),
+          gx: 90,
+          gy: 0,
+          gz: 0,
+        },
+      },
       i * dt
     );
   }
-  assertNear(tracker.feather, 90, 8, "LP gravity reports ~90° feather");
+  assertNear(tracker.feather, 90, 8, "shaft roll reports ~90° feather");
 }
 
 /* --- boat class: stroke-side / bow-side → port/starboard --- */
@@ -689,7 +703,27 @@ function catchTimes(ampUnused, spm, seconds) {
   step(90, 500);
   step(-110, 90);
   const afterFinish = t;
-  step(-12, 450, { ax: 0, ay: 1, az: 0 });
+  const rollMs = 450;
+  const nRoll = Math.round(rollMs / dt);
+  const rollRate = 90 / (rollMs / 1000);
+  for (let i = 0; i < nRoll; i++) {
+    t += dt;
+    const phi = ((i + 1) / nRoll) * (Math.PI / 2);
+    tracker.update(
+      {
+        protocol: 2,
+        eng: {
+          ax: 0,
+          ay: Math.sin(phi),
+          az: Math.cos(phi),
+          gx: rollRate,
+          gy: 0,
+          gz: -12,
+        },
+      },
+      t
+    );
+  }
   const feathers = events.filter((e) => e.type === "feather");
   assertEq(feathers.length, 1, "one feather-on after finish");
   assert(feathers[0].t > afterFinish, "feather-on is after finish");
@@ -789,6 +823,352 @@ function catchTimes(ampUnused, spm, seconds) {
     assertEq(cols[names.indexOf("t_feather_ms")], "", "untrusted t_feather empty");
     assertEq(cols[names.indexOf("feather_dt_vs_ref_ms")], "", "untrusted dt empty");
   }
+}
+
+function firstStroke(events) {
+  const catchEv = events.find((e) => e.type === "catch");
+  const finishEv = events.find((e) => e.type === "finish");
+  return { catchEv, finishEv };
+}
+
+function feedSquaredGyro(tracker, { ampDeg, spm, hz, seconds, rollDeg, settleSec = 0 }) {
+  const f = spm / 60;
+  const dt = 1000 / hz;
+  const n = Math.round(seconds * hz);
+  const roll = (rollDeg * Math.PI) / 180;
+  const ay = Math.sin(roll);
+  const az = Math.cos(roll);
+  const events = [];
+  tracker.onEvent = (ev) => events.push(ev);
+  const nSettle = Math.round(settleSec * hz);
+  for (let i = 0; i < nSettle; i++) {
+    tracker.update(
+      { protocol: 2, eng: { ax: 0, ay, az, gx: 0, gy: 0, gz: 0 } },
+      i * dt
+    );
+  }
+  for (let i = 0; i < n; i++) {
+    const t = (nSettle + i) * dt;
+    const sec = (i * dt) / 1000;
+    const omega = ampDeg * 2 * Math.PI * f * Math.cos(2 * Math.PI * f * sec);
+    tracker.update(
+      {
+        protocol: 2,
+        eng: {
+          ax: 0,
+          ay,
+          az,
+          gx: 0,
+          gy: omega * Math.sin(roll),
+          gz: omega * Math.cos(roll),
+        },
+      },
+      t
+    );
+  }
+  return events;
+}
+
+/* --- 1.5.0 nominal centres --- */
+{
+  assertEq(nominalArcCentreDeg("sweep"), -12, "sweep nominal centre");
+  assertEq(nominalArcCentreDeg("scull"), -10, "scull nominal centre");
+}
+
+/* --- 1.5.0 auto_centre_first_stroke --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+  tracker.setNominalCentre(-12);
+  const events = feedSine(tracker, { ampDeg: 45, spm: 30, hz: 56, seconds: 8 });
+  const { catchEv, finishEv } = firstStroke(events);
+  assert(catchEv && finishEv, "auto centre produced a stroke");
+  assertNear(
+    0.5 * (catchEv.theta + finishEv.theta),
+    -12,
+    1,
+    "arc centre is the nominal centre"
+  );
+  assertEq(tracker.snapshot().angleRef, "auto", "angleRef auto");
+  assertEq(catchEv.ref, "auto", "catch stamped auto");
+  assertEq(finishEv.ref, "auto", "finish stamped auto");
+}
+
+/* --- 1.5.0 auto_preserves_arc_and_timing --- */
+{
+  function run(useZero) {
+    const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+    tracker.setNominalCentre(-12);
+    if (useZero) tracker.zero();
+    const events = feedSine(tracker, { ampDeg: 45, spm: 30, hz: 56, seconds: 8 });
+    const { catchEv, finishEv } = firstStroke(events);
+    return {
+      tCatch: catchEv.t,
+      tFinish: finishEv.t,
+      arc: finishEv.theta - catchEv.theta,
+    };
+  }
+  const auto = run(false);
+  const measured = run(true);
+  assertNear(auto.tCatch, measured.tCatch, 1e-6, "catch time matches Zero");
+  assertNear(auto.tFinish, measured.tFinish, 1e-6, "finish time matches Zero");
+  assertNear(auto.arc, measured.arc, 0.05, "arc matches Zero");
+}
+
+/* --- 1.5.0 auto_feather_from_drive --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+  tracker.setNominalCentre(-12);
+  const events = feedSquaredGyro(tracker, {
+    ampDeg: 45,
+    spm: 30,
+    hz: 56,
+    seconds: 8,
+    rollDeg: 37,
+    settleSec: 8,
+  });
+  const { catchEv, finishEv } = firstStroke(events);
+  assert(catchEv && finishEv, "rolled mount still finds a stroke");
+  assertEq(tracker.snapshot().angleRef, "auto", "rolled mount auto-centred");
+  assertNear(tracker.feather, 0, 3, "squared drive reads feather near 0");
+}
+
+/* --- 1.5.0 zero_overrides_auto --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+  tracker.setNominalCentre(-12);
+  feedSine(tracker, { ampDeg: 45, spm: 30, hz: 56, seconds: 8 });
+  assertEq(tracker.snapshot().angleRef, "auto", "centred before Zero");
+  tracker.zero();
+  assertEq(tracker.snapshot().angleRef, "zero", "Zero switches to measured");
+  assertEq(tracker.snapshot().zeroed, true, "Zero still sets zeroed");
+  assert(tracker.snapshot().confidence !== "auto", "measured confidence leaves auto");
+}
+
+/* --- 1.5.1 per-stroke SPM, with the 5-gap average kept --- */
+{
+  const crew = new CrewSync({ catchSpreadMs: 40 });
+  crew.setReference("stroke");
+  const rms = { timebaseRmsMs: 5, seat: "stroke" };
+  let t = 0;
+  for (const gap of [0, 2000, 2000, 1000]) {
+    t += gap;
+    crew.observeEvent("stroke", { type: "catch", t, theta: -50 }, rms);
+    crew.observeEvent("stroke", { type: "finish", t: t + 800, theta: 30 }, rms);
+  }
+  const last = crew.snapshot().last;
+  assertNear(last.spm, 60, 0.1, "per-stroke spm is the last gap");
+  assertNear(last.spmAvg5, 36, 0.1, "five-gap average stays 36");
+  crew.observeEvent("stroke", { type: "catch", t: t + 7000, theta: -50 }, rms);
+  crew.observeEvent("stroke", { type: "finish", t: t + 7800, theta: 30 }, rms);
+  assertEq(crew.snapshot().spm, 0, "a 7 s rest blanks per-stroke spm");
+  crew.commit();
+  const csv = strokesToCsv(crew.strokes);
+  assert(csv.includes("spm_avg5"), "csv keeps the 5-stroke average");
+  assert(csv.includes("drive_index"), "csv has the unitless drive index");
+  assert(csv.includes("60000/(this catch-previous catch)"), "csv explains per-stroke spm");
+}
+
+/* --- 1.5.1 feather roll during the finish does not move the finish angle --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  const amp = 45;
+  const spm = 30;
+  const f = spm / 60;
+  const hz = 56;
+  const dt = 1000 / hz;
+  const finishes = [];
+  tracker.onEvent = (ev) => {
+    if (ev.type === "finish") finishes.push(ev);
+  };
+  const n = Math.round(8 * hz);
+  for (let i = 1; i < n; i++) {
+    const t = i * dt;
+    const sec = t / 1000;
+    const psi = amp * Math.sin(2 * Math.PI * f * sec);
+    const psiDot = amp * 2 * Math.PI * f * Math.cos(2 * Math.PI * f * sec);
+    /* Roll 90° in 0.2 s while the oar passes the finish (psi near +amp). */
+    const finishSec = 0.25 / f;
+    const rollU = Math.max(0, Math.min(1, (sec - (finishSec - 0.1)) / 0.2));
+    const phi = rollU * (Math.PI / 2);
+    const phiDot = rollU > 0 && rollU < 1 ? (Math.PI / 2) / 0.2 : 0;
+    const s = Math.sin(phi);
+    const c = Math.cos(phi);
+    tracker.update(
+      {
+        protocol: 2,
+        eng: {
+          ax: 0,
+          ay: s,
+          az: c,
+          gx: (phiDot * 180) / Math.PI,
+          gy: psiDot * s,
+          gz: psiDot * c,
+        },
+      },
+      t
+    );
+    if (finishes.length === 1) break;
+  }
+  assertEq(finishes.length, 1, "finish still detected through the roll");
+  assertNear(finishes[0].theta, amp, 2, "finish angle within 2° through a shaft roll");
+}
+
+/* --- 1.5.1 a constant 2 dps bias settles and catch stays put --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 300 });
+  const amp = 45;
+  const spm = 24;
+  const f = spm / 60;
+  const hz = 56;
+  const dt = 1000 / hz;
+  const bias = 2;
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  const catches = [];
+  tracker.onEvent = (ev) => {
+    if (ev.type === "catch") catches.push({ t: ev.t, theta: ev.theta });
+  };
+  const n = Math.round(60 * hz);
+  for (let i = 1; i < n; i++) {
+    const t = i * dt;
+    const sec = t / 1000;
+    const gz = amp * 2 * Math.PI * f * Math.cos(2 * Math.PI * f * sec) + bias;
+    tracker.update(
+      { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz } },
+      t
+    );
+  }
+  const late = catches.filter((ev) => ev.t > 40000);
+  assert(late.length >= 4, `late catches after bias settle (${late.length})`);
+  const mean = late.reduce((s, ev) => s + ev.theta, 0) / late.length;
+  for (const ev of late) {
+    assertNear(ev.theta, mean, 2, "catch stable within 2° over the last 20 s");
+  }
+  assertNear(tracker.snapshot().omegaBias, bias, 0.6, "omegaBias learns about 2 dps");
+}
+
+/* --- 1.5.1 a hesitation mid-drive is not a finish --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 200 });
+  const hz = 56;
+  const dt = 1000 / hz;
+  let t = 0;
+  const finishes = [];
+  tracker.onEvent = (ev) => {
+    if (ev.type === "finish") finishes.push(ev.theta);
+  };
+  const hold = (gz, ms) => {
+    const n = Math.max(1, Math.round(ms / dt));
+    for (let i = 0; i < n; i++) {
+      t += dt;
+      tracker.update(
+        { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz } },
+        t
+      );
+    }
+  };
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  for (let s = 0; s < 3; s++) {
+    hold(-80, 300);
+    hold(120, 700);
+    hold(-120, 500);
+  }
+  const before = finishes.length;
+  hold(-80, 300);
+  hold(100, 250);
+  hold(-40, 150);
+  hold(100, 600);
+  hold(-120, 400);
+  assert(before >= 2, `setup strokes finished (${before})`);
+  assertEq(finishes.length, before + 1, "hesitation does not add a finish");
+  assert(finishes[finishes.length - 1] > 20, "the real finish is still on the finish side");
+}
+
+/* --- 1.5.1 rest wiggles on the finish side are not catches --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 15, refractoryMs: 200 });
+  const hz = 56;
+  const dt = 1000 / hz;
+  let t = 0;
+  const catches = [];
+  tracker.onEvent = (ev) => {
+    if (ev.type === "catch") catches.push(ev.t);
+  };
+  const hold = (gz, ms) => {
+    const n = Math.max(1, Math.round(ms / dt));
+    for (let i = 0; i < n; i++) {
+      t += dt;
+      tracker.update(
+        { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz } },
+        t
+      );
+    }
+  };
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  hold(-80, 400);
+  hold(120, 700);
+  hold(-120, 400);
+  hold(40, 400);
+  const afterStroke = catches.length;
+  const wiggleAt = t;
+  for (let k = 0; k < 6; k++) {
+    hold(35, 180);
+    hold(-35, 180);
+  }
+  const extra = catches.filter((ct) => ct > wiggleAt);
+  assert(afterStroke >= 1, "the real stroke still catches");
+  assertEq(extra.length, 0, "finish-side wiggles add no catches");
+}
+
+/* --- 1.5.1 drive index is unitless and stays near 100 for a repeated swing --- */
+{
+  const tracker = new OarAngleTracker({ omegaPeakMin: 20, refractoryMs: 200 });
+  const indexes = [];
+  tracker.onEvent = (ev) => {
+    if (ev.type === "finish") indexes.push(ev.driveIndex);
+  };
+  const hz = 56;
+  const dt = 1000 / hz;
+  let t = 0;
+  const hold = (gz, ms) => {
+    const n = Math.max(1, Math.round(ms / dt));
+    for (let i = 0; i < n; i++) {
+      t += dt;
+      tracker.update(
+        { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz } },
+        t
+      );
+    }
+  };
+  tracker.update(
+    { protocol: 2, eng: { ax: 0, ay: 0, az: 1, gx: 0, gy: 0, gz: 0 } },
+    0
+  );
+  tracker.zero();
+  for (let s = 0; s < 3; s++) {
+    hold(-80, 300);
+    hold(120, 700);
+    hold(-120, 500);
+  }
+  assert(indexes.length >= 2, "finishes carry a drive index");
+  assertNear(indexes[indexes.length - 1], 100, 20, "a repeated swing stays near 100");
+  assert(indexes.every((v) => v > 0 && v < 500), "drive index is not a watt-scale number");
 }
 
 console.log(`rowing tests: ${passed} passed, ${failed} failed`);

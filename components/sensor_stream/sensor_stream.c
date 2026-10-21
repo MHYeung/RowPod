@@ -11,9 +11,9 @@
 #include "freertos/FreeRTOS.h" // IWYU pragma: keep
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "i2c_bus.h"
 #include "mahony.h"
-#include "qmc5883p.h"
 #include "qmi8658.h"
 
 static const char *TAG = "sensor_stream";
@@ -21,6 +21,7 @@ static const char *TAG = "sensor_stream";
 enum {
     TASK_NOTIFY_DRDY = 1u << 0,
     TASK_NOTIFY_CONTROL = 1u << 1,
+    TASK_NOTIFY_SLEEP = 1u << 2,
 };
 
 static TaskHandle_t s_task;
@@ -28,7 +29,6 @@ static QueueHandle_t s_latest_q;
 static volatile bool s_enabled;
 static volatile uint16_t s_requested_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
 static volatile uint16_t s_applied_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
-static volatile uint8_t s_mag_rate_hz = 50;
 static volatile bool s_rate_dirty;
 static volatile uint32_t s_dropped;
 static volatile uint32_t s_drdy_count;
@@ -36,14 +36,14 @@ static volatile uint32_t s_sample_index;
 static sensor_stream_sample_cb_t s_cb;
 static void *s_cb_ctx;
 static sensor_proto_meta_t s_meta;
-static qmc5883p_raw_t s_last_mag;
-static bool s_have_mag;
-static uint8_t s_mag_stride = 1;
-static uint8_t s_mag_div;
 static mahony_state_t s_mahony;
 static uint16_t s_accel_lsb = 2048;
 static uint16_t s_gyro_lsb = 16;
-static uint16_t s_mag_lsb = 3750;
+/* Binary semaphore: the stream task's notification bits are the DRDY mailbox,
+ * so the sleep ack cannot share that word. */
+static StaticSemaphore_t s_sleep_ack_buf;
+static SemaphoreHandle_t s_sleep_ack;
+static volatile esp_err_t s_sleep_result;
 
 #define DEG_TO_RAD 0.01745329252f
 
@@ -55,34 +55,28 @@ static bool rate_allowed(uint16_t hz)
            hz == SENSOR_PROTO_RATE_CAPTURE_HZ;
 }
 
-static uint8_t mag_hz_for_imu(uint16_t imu_hz)
+static void handle_sleep_request(void)
 {
-    if (imu_hz == SENSOR_PROTO_RATE_LIVE_HZ) {
-        return 50;
+    gpio_intr_disable(BOARD_IMU_INT2_GPIO);
+    s_sleep_result = qmi8658_power_down();
+    if (s_sleep_result != ESP_OK) {
+        ESP_LOGW(TAG, "IMU power-down: %s", esp_err_to_name(s_sleep_result));
+        esp_err_t en = gpio_intr_enable(BOARD_IMU_INT2_GPIO);
+        if (en != ESP_OK) {
+            ESP_LOGW(TAG, "DRDY re-enable: %s", esp_err_to_name(en));
+        }
+        if (s_sleep_ack) {
+            xSemaphoreGive(s_sleep_ack);
+        }
+        return;
     }
-    if (imu_hz == SENSOR_PROTO_RATE_LOG_HZ ||
-        imu_hz == SENSOR_PROTO_RATE_CAPTURE_HZ) {
-        return 100;
+    if (s_sleep_ack) {
+        xSemaphoreGive(s_sleep_ack);
     }
-    return 200;
-}
-
-/**
- * Read mag every N IMU DRDYs so I2C stays near the mag ODR (~10 ms at 448/100).
- */
-static uint8_t mag_stride_for(uint16_t imu_hz, uint8_t mag_hz)
-{
-    if (mag_hz == 0 || imu_hz <= mag_hz) {
-        return 1;
+    /* Deep sleep resets the chip. Park so this task cannot touch I2C again. */
+    for (;;) {
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
-    uint16_t n = (uint16_t)((imu_hz + mag_hz / 2u) / mag_hz);
-    if (n < 1) {
-        return 1;
-    }
-    if (n > 8) {
-        return 8;
-    }
-    return (uint8_t)n;
 }
 
 static void IRAM_ATTR imu_drdy_isr(void *arg)
@@ -131,17 +125,12 @@ static void stream_task(void *arg)
         if (s_rate_dirty) {
             uint16_t want = s_requested_rate_hz;
             esp_err_t imu_err = qmi8658_set_odr_for_rate(want);
-            esp_err_t mag_err = qmc5883p_set_odr_for_rate(want);
-            if (imu_err == ESP_OK && mag_err == ESP_OK) {
+            if (imu_err == ESP_OK) {
                 s_applied_rate_hz = want;
-                s_mag_rate_hz = mag_hz_for_imu(want);
-                s_mag_stride = mag_stride_for(want, s_mag_rate_hz);
-                s_mag_div = s_mag_stride; /* next DRDY refreshes mag */
                 s_meta.rate_hz = sensor_proto_rate_to_wire(want);
             } else {
-                ESP_LOGW(TAG, "ODR update failed IMU=%s MAG=%s; keeping %u Hz",
-                         esp_err_to_name(imu_err), esp_err_to_name(mag_err),
-                         (unsigned)s_applied_rate_hz);
+                ESP_LOGW(TAG, "ODR update failed IMU=%s; keeping %u Hz",
+                         esp_err_to_name(imu_err), (unsigned)s_applied_rate_hz);
             }
             s_rate_dirty = false;
         }
@@ -150,6 +139,9 @@ static void stream_task(void *arg)
             uint32_t notification = 0;
             (void)xTaskNotifyWait(0, UINT32_MAX, &notification,
                                   portMAX_DELAY);
+            if (notification & TASK_NOTIFY_SLEEP) {
+                handle_sleep_request();
+            }
             continue;
         }
 
@@ -158,7 +150,13 @@ static void stream_task(void *arg)
         if (xTaskNotifyWait(0, UINT32_MAX, &notification, portMAX_DELAY) !=
                 pdTRUE ||
             (notification & TASK_NOTIFY_DRDY) == 0) {
+            if (notification & TASK_NOTIFY_SLEEP) {
+                handle_sleep_request();
+            }
             continue;
+        }
+        if (notification & TASK_NOTIFY_SLEEP) {
+            handle_sleep_request();
         }
         uint32_t drdy_count = s_drdy_count;
         uint32_t slots = 1;
@@ -186,25 +184,12 @@ static void stream_task(void *arg)
         qmi8658_raw_t imu = {0};
         esp_err_t e1 = qmi8658_read_raw(&imu);
 
-        /* IMU on every DRDY (~2.2 ms at 448 Hz). Mag I2C at mag ODR (~10 ms). */
-        bool mag_fresh = false;
-        s_mag_div++;
-        if (s_mag_div >= s_mag_stride) {
-            s_mag_div = 0;
-            qmc5883p_raw_t mag = {0};
-            if (qmc5883p_read_raw(&mag) == ESP_OK) {
-                s_last_mag = mag;
-                s_have_mag = true;
-                mag_fresh = true;
-            }
-        }
-
         /*
          * Always consume one sample_index slot so failed reads remain visible
          * as gaps in the host timebase rather than silent stalls.
          */
         uint32_t index = s_sample_index++;
-        if (e1 == ESP_OK && s_have_mag) {
+        if (e1 == ESP_OK) {
             float dt = s_applied_rate_hz
                 ? (float)slots / (float)s_applied_rate_hz
                 : 0.002f;
@@ -214,11 +199,9 @@ static void stream_task(void *arg)
             float gx = (float)imu.gx / (float)s_gyro_lsb * DEG_TO_RAD;
             float gy = (float)imu.gy / (float)s_gyro_lsb * DEG_TO_RAD;
             float gz = (float)imu.gz / (float)s_gyro_lsb * DEG_TO_RAD;
-            float mx = (float)s_last_mag.mx / (float)s_mag_lsb;
-            float my = (float)s_last_mag.my / (float)s_mag_lsb;
-            float mz = (float)s_last_mag.mz / (float)s_mag_lsb;
-            mahony_update(&s_mahony, gx, gy, gz, ax, ay, az, mx, my, mz,
-                          mag_fresh, dt);
+            /* v2 has no magnetometer. mag_valid stays false so yaw is gyro-only. */
+            mahony_update(&s_mahony, gx, gy, gz, ax, ay, az, 0.0f, 0.0f, 0.0f,
+                          false, dt);
             int16_t q15[4];
             mahony_get_q15(&s_mahony, q15);
 
@@ -230,9 +213,9 @@ static void stream_task(void *arg)
                 .gx = imu.gx,
                 .gy = imu.gy,
                 .gz = imu.gz,
-                .mx = s_last_mag.mx,
-                .my = s_last_mag.my,
-                .mz = s_last_mag.mz,
+                .mx = 0,
+                .my = 0,
+                .mz = 0,
                 .qw = q15[0],
                 .qx = q15[1],
                 .qy = q15[2],
@@ -247,8 +230,8 @@ static void stream_task(void *arg)
                 s_cb(&sample, s_cb_ctx);
             }
         } else {
-            ESP_LOGW(TAG, "sample fail IMU=%s mag_ready=%d index=%" PRIu32,
-                     esp_err_to_name(e1), (int)s_have_mag, index);
+            ESP_LOGW(TAG, "sample fail IMU=%s index=%" PRIu32,
+                     esp_err_to_name(e1), index);
             s_dropped++;
         }
     }
@@ -272,27 +255,17 @@ esp_err_t sensor_stream_init(void)
     ESP_RETURN_ON_ERROR(init_drdy_gpio(), TAG, "DRDY GPIO");
     ESP_RETURN_ON_ERROR(i2c_bus_init(), TAG, "i2c");
     ESP_RETURN_ON_ERROR(qmi8658_init(), TAG, "imu");
-    ESP_RETURN_ON_ERROR(qmc5883p_init(), TAG, "mag");
     ESP_RETURN_ON_ERROR(qmi8658_set_odr_for_rate(SENSOR_PROTO_RATE_LIVE_HZ), TAG,
                         "odr");
-    ESP_RETURN_ON_ERROR(qmc5883p_set_odr_for_rate(SENSOR_PROTO_RATE_LIVE_HZ),
-                        TAG, "mag odr");
 
     qmi8658_scale_t as = {0};
-    qmc5883p_scale_t ms = {0};
     ESP_RETURN_ON_ERROR(qmi8658_get_scale(&as), TAG, "a scale");
-    ESP_RETURN_ON_ERROR(qmc5883p_get_scale(&ms), TAG, "m scale");
     s_accel_lsb = as.accel_lsb_per_g;
     s_gyro_lsb = as.gyro_lsb_per_dps;
-    s_mag_lsb = ms.lsb_per_gauss;
     mahony_init(&s_mahony);
 
     s_requested_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
     s_applied_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
-    s_mag_rate_hz = mag_hz_for_imu(SENSOR_PROTO_RATE_LIVE_HZ);
-    s_mag_stride = mag_stride_for(s_applied_rate_hz, s_mag_rate_hz);
-    s_mag_div = s_mag_stride;
-    s_have_mag = false;
     s_rate_dirty = false;
     s_drdy_count = 0;
     s_sample_index = 0;
@@ -301,13 +274,15 @@ esp_err_t sensor_stream_init(void)
         .rate_hz = sensor_proto_rate_to_wire(SENSOR_PROTO_RATE_LIVE_HZ),
         .accel_lsb_per_g = as.accel_lsb_per_g,
         .gyro_lsb_per_dps = as.gyro_lsb_per_dps,
-        .mag_lsb_per_gauss = ms.lsb_per_gauss,
+        .mag_lsb_per_gauss = 0,
         .flags = 0,
         .reserved = 0,
     };
 
     s_latest_q = xQueueCreate(1, sizeof(sensor_proto_sample_t));
     ESP_RETURN_ON_FALSE(s_latest_q, ESP_ERR_NO_MEM, TAG, "queue");
+    s_sleep_ack = xSemaphoreCreateBinaryStatic(&s_sleep_ack_buf);
+    ESP_RETURN_ON_FALSE(s_sleep_ack, ESP_ERR_NO_MEM, TAG, "sleep ack");
 
     BaseType_t ok =
         xTaskCreate(stream_task, "sensor_stream", 6144, NULL, 5, &s_task);
@@ -368,7 +343,21 @@ bool sensor_stream_is_rate_applied(void)
 
 uint8_t sensor_stream_get_mag_rate_hz(void)
 {
-    return s_mag_rate_hz;
+    return 0;
+}
+
+esp_err_t sensor_stream_prepare_sleep(TickType_t timeout)
+{
+    ESP_RETURN_ON_FALSE(s_task && s_sleep_ack, ESP_ERR_INVALID_STATE, TAG,
+                        "not running");
+    s_enabled = false;
+    (void)xSemaphoreTake(s_sleep_ack, 0);
+    s_sleep_result = ESP_ERR_INVALID_STATE;
+    xTaskNotify(s_task, TASK_NOTIFY_SLEEP, eSetBits);
+    if (xSemaphoreTake(s_sleep_ack, timeout) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    return s_sleep_result;
 }
 
 void sensor_stream_set_sample_cb(sensor_stream_sample_cb_t cb, void *ctx)

@@ -10,7 +10,7 @@ Before changing RowPod matching, angle, CSV, boat class, or rowing-profile firmw
 
 1. Read `docs/ROWPOD_NEXT.md` (ingested agent prompt + human gate).
 2. Read `docs/ROWPOD_ECOSYSTEM.md` and `docs/ROWING_SYNC.md`.
-3. Default next host slice is **1.5 Feather + blade flags**. Host **1.4 Honest Crew Clock** is shipped. Do not start 1.5 until the human names it.
+3. Host **1.5 Connect and go** is shipped: the first stroke centres the fan, and Zero is measured-only. The next named slice is **1.6 Feather + blade flags**. Do not start 1.6 until the human names it.
 4. Host owns oar angle. Do not flash firmware unless a test shows the host cannot proceed. Live rowing stays 56 Hz. No mag yaw. No watts.
 5. Firmware **major / v2** is an owner decision, not an automatic follow-on to 1.4.0.
 6. Pages root is RowPod (`web/ble_plotter/index.html`). IMU lab / HYROX stays at `lab.html`. Do not put plots, HYROX, or mag-cal on the towpath page.

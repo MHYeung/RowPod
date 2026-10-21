@@ -18,7 +18,7 @@ static void pins_as_idle_inputs(void)
     gpio_config_t cfg = {
         .pin_bit_mask = (1ULL << BOARD_I2C_SDA_GPIO) | (1ULL << BOARD_I2C_SCL_GPIO),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
     };
     gpio_config(&cfg);
@@ -55,7 +55,7 @@ esp_err_t i2c_bus_init(void)
         .scl_io_num = BOARD_I2C_SCL_GPIO,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
+        .flags.enable_internal_pullup = false,
     };
     ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &s_bus), TAG, "new bus");
     s_ready = true;

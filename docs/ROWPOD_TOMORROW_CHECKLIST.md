@@ -110,5 +110,29 @@ Drop the CSVs in chat (bar first, water if you got it). I will score:
 
 Do **not** ask for a firmware bump unless this CSV shows the host cannot
 timestamp catches. Host **1.4.4** is the same detector as 1.4.3; the Pages
-root is now RowPod. Next named software slice is still **1.5 feather axis**,
+root is now RowPod. **1.5 connect and go** centres the fan on the first stroke. Next named software slice is **1.6 feather axis**,
 only after you say so.
+
+## 4. Fixed-stop bench (1.5.1 catch and finish)
+
+Do this before trusting catch and finish degrees from 1.5.1.
+
+1. Clamp hard end stops. Check them with a protractor, for example catch −60° and finish +35°.
+2. Strap the pod so it cannot slip. Keep the LED orientation the same as last time.
+3. Row 3 × 20 strokes, about 20, then 30, then 40 spm. Rest between the sets (the per-stroke SPM goes blank on a gap over 6 s).
+4. Repeat once on host 1.5.0 and once on 1.5.1 if you still have the old page cached.
+5. Also record one run from the IMU lab page so the raw stream can be replayed.
+
+Pass, on the finished strokes of each set:
+
+| Check | Pass |
+|-------|------|
+| Catch standard deviation | under 2° |
+| Finish standard deviation | under 2° |
+| Arc standard deviation | under 2° |
+| Stub finishes (arc under half the recent median) | none |
+| Catches during the rests | none |
+| `spm` | matches 60000 / the last catch gap, not a 5-stroke lag |
+
+Firmer mounting matters as much as the detector. A strap that creeps will fail this table on both versions.
+

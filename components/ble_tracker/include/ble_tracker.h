@@ -27,10 +27,10 @@ typedef void (*ble_tracker_link_cb_t)(bool connected);
 /** @brief Register a callback: true means connected, false means advertising. */
 esp_err_t ble_tracker_set_link_cb(ble_tracker_link_cb_t cb);
 
-/** @brief Stop advertising and deinitialize NimBLE before light sleep. */
+/** @brief Stop advertising and deinitialize NimBLE before deep sleep. */
 esp_err_t ble_tracker_stop_advertising(void);
 
-/** @brief Reinitialize NimBLE and resume advertising after wake. */
+/** @brief Reinitialize NimBLE if deep-sleep entry is aborted. */
 esp_err_t ble_tracker_start_advertising(void);
 
 /**

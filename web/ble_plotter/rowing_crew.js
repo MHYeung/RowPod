@@ -14,12 +14,16 @@ export const MATCH_EARLY_SLACK_MS = 80;
 export const MATCH_MAX_LATE_MS = 350;
 export const UNTRUSTED_CLOCK_RMS_MS = 15;
 export const WIDE_SPREAD_MS = 200;
+/** Per-stroke SPM ignores gaps outside a real stroke. */
+export const SPM_MIN_GAP_MS = 600;
+export const SPM_MAX_GAP_MS = 6000;
 
 export const STROKE_CSV_COLUMNS =
   "stroke_index,seat,side,hand,pod_id,t_catch_ms,t_finish_ms,t_feather_ms,catch_deg,finish_deg," +
   "arc_deg,blade_arc_m,feather_catch_deg,feather_finish_deg," +
   "catch_dt_vs_ref_ms,finish_dt_vs_ref_ms,feather_dt_vs_ref_ms,crew_catch_spread_ms," +
-  "crew_finish_spread_ms,in_sync,match_quality,spm,timebase_rms_ms,clock_status";
+  "crew_finish_spread_ms,in_sync,match_quality,spm,timebase_rms_ms,clock_status,angle_ref,spm_avg5," +
+  "drive_ms,recovery_ms,drive_ratio,peak_omega_dps,theta_at_peak_deg,tip_speed_mps,drive_index";
 
 export function matchLateCapMs(periodMs) {
   const p = Number(periodMs);
@@ -390,11 +394,23 @@ export class CrewSync {
           : 0,
       inSync,
       spm: this._spm(),
+      spmAvg5: this._spmAvg5(),
       seats,
     };
   }
 
+  /** 60000 / last reference catch gap. Blank on a rest or a noise gap. */
   _spm() {
+    if (this._refCatchTimes.length < 2) return 0;
+    const t1 = this._refCatchTimes[this._refCatchTimes.length - 1];
+    const t0 = this._refCatchTimes[this._refCatchTimes.length - 2];
+    const gap = t1 - t0;
+    if (gap < SPM_MIN_GAP_MS || gap > SPM_MAX_GAP_MS) return 0;
+    return 60000 / gap;
+  }
+
+  /** Mean of up to five catch gaps. Kept so a piece can be compared with 1.5.0 logs. */
+  _spmAvg5() {
     if (this._refCatchTimes.length < 2) return 0;
     const n = Math.min(5, this._refCatchTimes.length - 1);
     const t1 = this._refCatchTimes[this._refCatchTimes.length - 1];
@@ -435,7 +451,9 @@ export function strokesToCsv(strokes, t0 = 0, meta = {}) {
   const inboardM = Number(meta.inboardM);
   const outboardM = Number(meta.outboardM);
   const lines = [
-    "# RowPod per-stroke CSV v1.4",
+    "# RowPod per-stroke CSV v1.5",
+    "# spm=60000/(this catch-previous catch); blank if gap <600ms or >6000ms. spm_avg5=mean of up to 5 gaps.",
+    "# drive_index is unitless (100 ~ this seat's first strokes). Not watts. tip_speed_mps = |peak ω| × outboard.",
     `# rowpod_version=${ROWPOD_VERSION}`,
     `# boat_class=${meta.boatClass || ""}`,
     `# stroke_sits=${meta.strokeSits || ""}`,
@@ -490,6 +508,17 @@ export function strokesToCsv(strokes, t0 = 0, meta = {}) {
           stroke.spm ? stroke.spm.toFixed(1) : "",
           seat.timebaseRmsMs != null ? Number(seat.timebaseRmsMs).toFixed(1) : "",
           csvEscape(seat.clockStatus || ""),
+          csvEscape(seat.catch?.ref || ""),
+          stroke.spmAvg5 ? stroke.spmAvg5.toFixed(1) : "",
+          seat.finish?.driveMs != null ? Number(seat.finish.driveMs).toFixed(0) : "",
+          seat.finish?.recoveryMs != null ? Number(seat.finish.recoveryMs).toFixed(0) : "",
+          seat.finish?.driveRatio != null ? Number(seat.finish.driveRatio).toFixed(2) : "",
+          seat.finish?.peakOmegaDps != null ? Number(seat.finish.peakOmegaDps).toFixed(1) : "",
+          seat.finish?.thetaAtPeakDeg != null ? Number(seat.finish.thetaAtPeakDeg).toFixed(1) : "",
+          seat.finish?.peakOmegaDps != null && Number.isFinite(outboardM)
+            ? ((Math.abs(seat.finish.peakOmegaDps) * Math.PI) / 180 * outboardM).toFixed(2)
+            : "",
+          seat.finish?.driveIndex != null ? Number(seat.finish.driveIndex).toFixed(0) : "",
         ].join(",")
       );
     }

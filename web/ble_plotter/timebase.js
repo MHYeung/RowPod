@@ -100,6 +100,13 @@ export class PodTimeBase {
     if (rttMs > this.maxRttMs) return this.snapshot();
     const sampleIndex = sample.sampleIndex >>> 0;
     const hostMs = Number(sample.hostMs);
+    /* Deep sleep reboots the pod, so sample_index restarts at 0. A backwards
+     * jump bigger than two nominal periods is a new boot, not jitter. */
+    const last = this.points[this.points.length - 1];
+    if (last && sampleIndex + this.nominalHz * 2 < last.sampleIndex) {
+      this.points.length = 0;
+      this.ok = false;
+    }
     if (!Number.isFinite(hostMs)) return this.snapshot();
     const w = 1 / Math.max(rttMs, 1);
     this.points.push({ sampleIndex, hostMs, rttMs, w });
