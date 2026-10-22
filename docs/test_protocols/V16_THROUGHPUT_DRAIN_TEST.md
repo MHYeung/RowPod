@@ -16,7 +16,7 @@ Pair this with an external current logger when assessing energy use.
 ## Equipment
 
 - One to four flashed v16 pods.
-- Chrome or Edge on HTTPS / localhost IMU lab `lab.html?v=16.8`.
+- Chrome or Edge on HTTPS / localhost IMU lab `lab.html?v=16.9`.
 - Optional: BLE sniffer or phone that forces a small ATT MTU.
 
 ## Cases
@@ -31,7 +31,7 @@ Pair this with an external current logger when assessing energy use.
 
 ## Procedure
 
-1. Flash firmware and hard-refresh the IMU lab (`lab.html?v=16.8`).
+1. Flash firmware and hard-refresh the IMU lab (`lab.html?v=16.9`).
 2. Add the required pods. Confirm Summary → Capture integrity shows
    `proto v2`, applied rate, MTU, and queue counters.
 3. Start a status log on the Battery test tab (60 s interval).

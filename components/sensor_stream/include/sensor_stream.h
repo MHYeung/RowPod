@@ -27,6 +27,16 @@ void sensor_stream_set_enabled(bool enabled);
 bool sensor_stream_is_enabled(void);
 
 /**
+ * @brief Run the on-device Mahony filter for each sample.
+ *
+ * Off by default. v2 has no magnetometer and hosts integrate raw gyro, so
+ * the filter only runs while a host subscribes to the fused stream. While
+ * off, samples carry the identity quaternion. The filter restarts from
+ * identity on the next enable. Safe from BLE callbacks.
+ */
+void sensor_stream_set_fusion_enabled(bool enabled);
+
+/**
  * @brief Request a sensor-native sample rate (56, 112, 224, or 448 Hz).
  *
  * The I2C-owning task applies the change asynchronously. Query

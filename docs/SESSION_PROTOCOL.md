@@ -36,8 +36,10 @@ new clock.
 - `9b7e200c-…` — coach control write: zero / set side / clear. The phone app does not use it
 - When more than one motion CCCD is enabled, firmware prefers fused, then v16,
   then v1, so radio load is not doubled
-- Capture at ≥224 Hz packs 4 fused frames (~112 notifies/s at 448 Hz) or 2 v16
-  frames, and waits for `NOTIFY_TX` between batches
+- Live sends one frame per notify. A capture sends only full batches: 2 frames
+  at 112 Hz and 4 at ≥224 Hz, so each pod stays near 56 notifies/s (112/s at
+  448 Hz). `DRAIN` flushes the last partial batch. The batch never exceeds
+  `(ATT_MTU − 3) / frame_len`, and it waits for `NOTIFY_TX` between batches
 
 ### Configuration
 
@@ -60,15 +62,21 @@ The dashboard executes this sequence for every connected pod:
 1. **Preflight**: read capabilities / status MTU and warn before high-rate starts.
 2. `PREPARE`: assign one non-zero `capture_id`, choose the sensor-native rate,
    reset per-capture counter baselines, clear the transport queue, enter
-   `prepared`.
-3. `START`: enter `recording`; the first accepted sample becomes `first_sample`.
-4. `BIAS_START` and `MOTION`: browser phases are recorded in the CSV while the
+   `prepared`. `flags` bits 0–3 cap frames per notify (0 = firmware batch).
+3. **Probe** (host only): frames keep flowing while `prepared`. The lab waits
+   500 ms and requires a packet of exactly `batch × frame_len` from every pod.
+   On failure it sends `ABORT` and prepares again at 112 Hz with `flags = 1`.
+   Pod-side ATT MTU alone does not prove the browser receives large packets.
+4. `START`: enter `recording`; the first accepted sample becomes `first_sample`.
+   From here to `FINALIZE` the host sends no periodic sync, battery, or status
+   reads; it syncs once before `PREPARE` and once after `FINALIZE`.
+5. `BIAS_START` and `MOTION`: browser phases are recorded in the CSV while the
    pod remains in `recording`.
-5. `STOP`: enter `stop_requested` while the two-second end-stillness interval
+6. `STOP`: enter `stop_requested` while the two-second end-stillness interval
    continues to accept capture samples.
-6. `DRAIN`: stop accepting new transport frames, flush the notification/retry
+7. `DRAIN`: stop accepting new transport frames, flush the notification/retry
    queue, freeze `final_sample = last_sent`, and set `drain_done`.
-7. `FINALIZE`: allowed only when `drain_done` is set and the queue is empty.
+8. `FINALIZE`: allowed only when `drain_done` is set and the queue is empty.
    Preserve the final status snapshot, stop CSV capture, and restore the 56 Hz
    live-monitor rate on the host.
 
@@ -91,13 +99,15 @@ rate fields cannot store 448, so that profile is encoded as wire value `255`
 
 ## CSV provenance
 
-CSV v7 logs on-device Mahony `qw,qx,qy,qz`, body accel, and the mag vector the
-filter consumed. `sample_index`, `missing_frames`, `gap_events`, and the three
-device drop counters remain for integrity. Raw, clean, cal, reconstructed gyro,
-and per-row session snapshots were dropped; those belong in status CSV or
-headers. `arrival_ms` remains useful for browser-latency diagnostics;
-`sample_ms` is derived from `sample_index` and the rate epoch. v6 files still
-reconstruct via host AHRS when gyro columns are present.
+CSV v8 logs body accel `ax_g..az_g` and gyro `gx_dps..gz_dps` for every pod.
+`qw..qz` appear only when a pod streams fused frames, and `mx_G..mz_G` only
+when a pod has a magnetometer, so a v2-only capture has neither. `pod_id` and
+the per-row drop counters moved to header lines: `# podN=` and one
+`# integrity=` line per pod with the last host sequence counters and device
+snapshot. The browser stores samples in typed arrays and writes text only on
+download. `sample_ms` is derived from `sample_index` and `rate_hz`;
+`arrival_ms` is shared by every frame in one notify and is only a latency
+diagnostic. v7 files (quaternion, no gyro) and v6 files still load in the tools.
 
 ## Software sync (`…2003`)
 

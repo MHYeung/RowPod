@@ -1,4 +1,4 @@
-const CACHE = "rowpod-1.5.1";
+const CACHE = "rowpod-1.5.3";
 const ASSETS = [
   "./index.html",
   "./rowpod.html",

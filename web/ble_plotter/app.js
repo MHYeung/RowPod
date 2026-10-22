@@ -1,5 +1,6 @@
 import {
   CHANNELS,
+  RATE_HIGH_HZ,
   RATE_LIVE_HZ,
   RATE_LOG_HZ,
   RATE_LOG_MAX_HZ,
@@ -9,6 +10,7 @@ import {
   SESSION_PREPARE,
   SESSION_START,
   SESSION_STOP,
+  captureBatchFrames,
   eulerFromQuat,
 } from "./protocol.js";
 import { MultiPlot } from "./plot.js";
@@ -70,7 +72,7 @@ try {
       !btnTestStart || !btnTestStop || !btnTestDownload || !btnTestClear ||
       !testLabelEl || !testIntervalEl || !testElapsedEl || !testRowsEl ||
       !testStateEl || !testLatestEl || !document.getElementById("captureIntegrity")) {
-    throw new Error("Lab HTML outdated — hard-refresh (Ctrl+Shift+R) and open lab.html?v=16.8");
+    throw new Error("Lab HTML outdated — hard-refresh (Ctrl+Shift+R) and open lab.html?v=16.9");
   }
 
   const plotAccel = new MultiPlot(document.getElementById("plotAccel"), ["ax", "ay", "az"], {
@@ -95,6 +97,7 @@ try {
   let magCalRunning = false;
   let stopPending = false;
   let activeCaptureId = 0;
+  let activeLogHz = 0;
   let captureState = "idle";
   let statusTestTimer = null;
   let statusCapturePending = false;
@@ -128,10 +131,10 @@ try {
 
   function chooseLogRateHz() {
     const n = registry.list().filter((s) => s.status === "connected").length;
-    /* Prefer max rate over zero-loss: 1-pod 448 Hz, multi-pod 112 Hz.
-     * Sparse gaps are acceptable; STOP uses write-without-response so control
-     * traffic should still land under notify load. */
-    return n <= 1 ? RATE_LOG_MAX_HZ : RATE_LOG_HZ;
+    /* 1 pod 448 Hz, several pods 224 Hz. The firmware packs 4 frames per
+     * notify at these rates; startCapture() probes that and falls back to
+     * 112 Hz if a link drops the larger packet. */
+    return n <= 1 ? RATE_LOG_MAX_HZ : RATE_HIGH_HZ;
   }
 
   function newCaptureId() {
@@ -212,9 +215,23 @@ try {
     }
   }
 
+  /**
+   * Start a capture. Batched rates are probed after PREPARE; if any link
+   * drops the batched packet, fall back to 112 Hz with one frame per notify.
+   */
   async function startCapture(logHz, extra = {}) {
+    try {
+      return await startCaptureAt(logHz, extra, captureBatchFrames(logHz));
+    } catch (error) {
+      if (!error.probeFailed) throw error;
+      setStatus(`${error.message} — falling back to ${RATE_LOG_HZ} Hz`, "err");
+      return startCaptureAt(RATE_LOG_HZ, extra, 1);
+    }
+  }
+
+  async function startCaptureAt(logHz, extra, batch) {
     requireSessionProtocol();
-    const preflight = registry.capturePreflightAll(logHz);
+    const preflight = registry.capturePreflightAll(logHz, batch);
     if (!preflight.ok) {
       const detail = preflight.warnings.join("; ");
       const proceed = window.confirm(
@@ -224,23 +241,39 @@ try {
         throw new Error(`capture preflight blocked: ${detail}`);
       }
     }
+    /* One sync before the capture, then no periodic writes until FINALIZE. */
+    await registry.resyncAllQuiet();
+    registry.quiet = true;
     const captureId = newCaptureId();
     activeCaptureId = captureId;
+    activeLogHz = logHz;
     captureState = "prepare";
     try {
       const prepared = await registry.sessionCommandAll(
         SESSION_PREPARE,
         captureId,
-        logHz
+        logHz,
+        batch
       );
       if (prepared.some((s) => !s || !rateMatches(s, logHz) ||
           s.stateName !== "prepared")) {
         throw new Error("pod rejected the requested capture rate or prepare state");
       }
+      if (batch > 1) {
+        const failed = await registry.probeMotionBatch(batch);
+        if (failed.length) {
+          const probe = new Error(
+            `${failed.join(", ")} did not deliver ${batch}-frame packets at ${logHz} Hz`
+          );
+          probe.probeFailed = true;
+          throw probe;
+        }
+      }
       captureState = "configure";
       logger.start({
         liveRateHz: RATE_LIVE_HZ,
         logRateHz: logHz,
+        batchFrames: batch,
         captureId,
         stillnessMs: 2000,
         preflightSummary: preflight.ok
@@ -268,7 +301,9 @@ try {
       }
       logger.stop();
       activeCaptureId = 0;
+      activeLogHz = 0;
       captureState = "idle";
+      registry.quiet = false;
       throw error;
     }
   }
@@ -321,6 +356,7 @@ try {
     } finally {
       logger.stop();
       activeCaptureId = 0;
+      activeLogHz = 0;
       captureState = "idle";
       try {
         if (restoreProfile) await registry.setWorkoutProfileAll(0);
@@ -328,6 +364,8 @@ try {
       } catch (error) {
         failure ||= error;
       }
+      registry.quiet = false;
+      await registry.resyncAllQuiet().catch(() => {});
       registry.clearIntegrityCounters();
       stopPending = false;
       updateLogUi();
@@ -341,7 +379,7 @@ try {
     const drop = logger.droppedCount ? ` · dropped ${logger.droppedCount}` : "";
     logRowsEl.textContent = String(logger.rowCount);
     logStateEl.textContent = logger.recording
-      ? `${logger.state} @ ${chooseLogRateHz()} Hz${drop}`
+      ? `${logger.state} @ ${activeLogHz || chooseLogRateHz()} Hz${drop}`
       : `idle (live ${RATE_LIVE_HZ} Hz)${drop}`;
     btnLogStart.disabled = n < 1 || logger.recording || stopPending;
     btnLogStop.disabled = n < 1 || !logger.recording || stopPending;
@@ -758,6 +796,8 @@ try {
       deviceId: session.id,
       podId: session.podId,
       rateHz: session.client.meta.rate_hz,
+      hasMag,
+      fused: Boolean(session.client.usesFusedMotion),
       sessionStatus: session.sessionStatus,
       missingFrames: session.missingFrames || 0,
       gapEvents: session.gaps || 0,
@@ -863,7 +903,9 @@ try {
       await registry.sessionCommandAll(SESSION_ABORT, activeCaptureId).catch(() => {});
       logger.stop();
       activeCaptureId = 0;
+      activeLogHz = 0;
       captureState = "idle";
+      registry.quiet = false;
     }
     for (const p of plots) {
       for (const id of [...p.series.keys()]) p.removeSeries(id);
@@ -881,7 +923,7 @@ try {
       setStatus(`Hold completely still for 2 s — bias start`, "ok");
       setTimeout(() => {
         if (logger.recording && logger.phase === "motion" && !stopPending) {
-          setStatus(`Move now — logging @ ${logHz} Hz`, "ok");
+          setStatus(`Move now — logging @ ${activeLogHz || logHz} Hz`, "ok");
         }
       }, 2200);
     } catch (e) {
@@ -943,7 +985,8 @@ try {
   });
 
   setInterval(() => {
-    if (registry.list().length && !statusLogger.recording) {
+    /* Battery and status reads compete with capture notifies on every link. */
+    if (registry.list().length && !statusLogger.recording && !logger.recording) {
       registry.refreshAllBatteries().catch(() => {});
       registry.refreshAllSessionStatus().catch(() => {});
       updatePodCardStats(registry.list(), registry.selectedId);

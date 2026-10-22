@@ -598,12 +598,47 @@ export function decodeSessionStatusV16(view) {
 }
 
 /**
+ * ATT payload the browser can actually deliver.
+ *
+ * The pod's exchanged MTU and Chrome's host hint disagree on Windows: the
+ * pod records 247 while notifications are still delivered at the default
+ * 20-byte payload. A notification larger than that is dropped whole, which
+ * leaves the link up (battery, sync) and the motion counter at zero.
+ * A missing host hint stays at the default MTU of 23.
+ *
+ * @param {number} deviceMtu Pod-reported ATT MTU.
+ * @param {number|null|undefined} hostMtu Browser hint, usually
+ *   maxWriteWithoutResponseSize + 3.
+ */
+export function negotiatedAttMtu(deviceMtu, hostMtu) {
+  const dev = Number(deviceMtu) >= 23 ? Number(deviceMtu) : 23;
+  const host = Number(hostMtu) >= 23 ? Number(hostMtu) : 23;
+  return Math.min(dev, host);
+}
+
+/** Four Windows links at 56 notifies/s each streamed with zero gaps. */
+export const BOAT_NOTIFY_BUDGET_HZ = 240;
+
+/**
+ * Frames per notify the firmware packs during a capture at this rate.
+ * Keeps each pod near 56 notifies/s; the host passes this in PREPARE flags.
+ */
+export function captureBatchFrames(rateHz) {
+  if (rateHz >= RATE_HIGH_HZ) return 4;
+  if (rateHz >= RATE_LOG_HZ) return 2;
+  return 1;
+}
+
+/**
  * Preflight whether a capture rate is likely safe for the current link.
- * @param {{attMtu?:number,maxBatchFrames?:number,supportsV16?:boolean}} caps
+ * attMtu is the pod's view; the PREPARE probe confirms the host receives
+ * the batched packet before START.
+ * @param {{attMtu?:number,maxBatchFrames?:number,supportsV16?:boolean,supportsFused?:boolean}} caps
  * @param {number} rateHz
  * @param {number} podCount
+ * @param {number} [hostMaxBatch] host cap sent in PREPARE flags (0 = none)
  */
-export function capturePreflight(caps, rateHz, podCount = 1) {
+export function capturePreflight(caps, rateHz, podCount = 1, hostMaxBatch = 0) {
   const warnings = [];
   const mtu = caps?.attMtu || 23;
   const frameLen = caps?.supportsFused
@@ -613,23 +648,30 @@ export function capturePreflight(caps, rateHz, podCount = 1) {
       : FRAME_V1_LEN;
   const payload = Math.max(0, mtu - 3);
   const maxBatch = caps?.maxBatchFrames || 1;
-  const highRateCap = rateHz >= RATE_HIGH_HZ ? (caps?.supportsFused ? 4 : 2) : maxBatch;
+  const want = captureBatchFrames(rateHz);
+  const cap = hostMaxBatch > 0 ? Math.min(want, hostMaxBatch) : want;
   const batch = Math.max(
     1,
-    Math.min(maxBatch, highRateCap, Math.floor(payload / frameLen) || 1)
+    Math.min(maxBatch, cap, Math.floor(payload / frameLen) || 1)
   );
   const notifyHz = rateHz / batch;
+  const boatNotifyHz = notifyHz * podCount;
   if (payload < frameLen) {
     warnings.push(`ATT MTU ${mtu} cannot carry a ${frameLen}-byte frame`);
   }
-  if (rateHz >= RATE_HIGH_HZ && podCount > 1) {
-    warnings.push(`${rateHz} Hz is only recommended for a single pod`);
-  }
-  if (rateHz >= 112 && batch < 2) {
-    warnings.push(`low batching (${batch} frame/notify) at ${rateHz} Hz may drop samples`);
+  if (batch < want) {
+    warnings.push(
+      `only ${batch} of ${want} frames per notify at ${rateHz} Hz may drop samples`
+    );
   }
   if (notifyHz > 120) {
     warnings.push(`estimated notify rate ~${Math.round(notifyHz)} Hz may stress the link`);
+  }
+  if (podCount > 1 && boatNotifyHz > BOAT_NOTIFY_BUDGET_HZ) {
+    warnings.push(
+      `~${Math.round(boatNotifyHz)} notifies/s across ${podCount} pods ` +
+        `exceeds the ${BOAT_NOTIFY_BUDGET_HZ}/s that streamed cleanly`
+    );
   }
   return {
     ok: warnings.length === 0,
@@ -637,6 +679,7 @@ export function capturePreflight(caps, rateHz, podCount = 1) {
     frameLen,
     batch,
     notifyHz,
+    boatNotifyHz,
     payload,
   };
 }

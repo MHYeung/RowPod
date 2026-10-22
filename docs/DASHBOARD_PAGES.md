@@ -12,7 +12,7 @@ RowPod 1.4.4 (portrait oar arc + crew sync) is the site root:
 
 IMU lab (plots, orientation, HYROX, session CSV, battery):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/lab.html?v=16.8`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/lab.html?v=16.9`
 
 Old `rowpod.html` bookmarks redirect to `index.html`. Chrome or Edge.
 Hard-refresh if scripts look stale.
@@ -54,4 +54,4 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=1.4.4`. IMU lab: `http://localhost:8080/lab.html?v=16.8`.
+Open `http://localhost:8080/?v=1.4.4`. IMU lab: `http://localhost:8080/lab.html?v=16.9`.

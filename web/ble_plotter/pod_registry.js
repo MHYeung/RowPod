@@ -44,6 +44,8 @@ export class PodRegistry {
     this.onFrame = null;
     this._colorIdx = 0;
     this._addPromise = null;
+    /** While a capture records, skip periodic sync writes on every link. */
+    this.quiet = false;
   }
 
   list() {
@@ -344,7 +346,8 @@ export class PodRegistry {
     }
   }
 
-  async resyncAllQuiet() {
+  async resyncAllQuiet({ force = false } = {}) {
+    if (this.quiet && !force) return;
     for (const session of this.sessions.values()) {
       if (session.status !== "connected") continue;
       try {
@@ -479,20 +482,24 @@ export class PodRegistry {
    * @param {number} rateHz
    * @returns {{ok:boolean,warnings:string[],details:object[]}}
    */
-  capturePreflightAll(rateHz) {
+  capturePreflightAll(rateHz, hostMaxBatch = 0) {
     const connected = this.list().filter((s) => s.status === "connected");
     const details = connected.map((session) => {
       const caps = {
         ...(session.caps || {}),
+        /* Pod view: the firmware packs batches against this. The PREPARE
+         * probe proves the host side before START. */
         attMtu: session.sessionStatus?.attMtu || session.caps?.attMtu || 23,
         /* Preflight must use the stream we will actually send. */
         supportsFused: Boolean(session.client.usesFusedMotion),
-        supportsV16: Boolean(
-          session.client.usesV16Motion &&
-          (session.sessionStatus?.attMtu || session.caps?.attMtu || 23) >= 25
-        ),
+        supportsV16: Boolean(session.client.usesV16Motion),
       };
-      const result = capturePreflight(caps, rateHz, connected.length);
+      const result = capturePreflight(
+        caps,
+        rateHz,
+        connected.length,
+        hostMaxBatch
+      );
       return {
         position: session.position,
         protocolVersion: session.protocolVersion,
@@ -504,6 +511,26 @@ export class PodRegistry {
       d.warnings.map((w) => `${d.position}: ${w}`)
     );
     return { ok: warnings.length === 0, warnings, details };
+  }
+
+  /**
+   * After PREPARE, confirm every pod's link delivers full batched packets.
+   * Returns the positions that did not, empty when all pass.
+   * @param {number} frames frames per notify requested in PREPARE flags
+   */
+  async probeMotionBatch(frames, waitMs = 500) {
+    const connected = this.list().filter((s) => s.status === "connected");
+    const before = connected.map((s) => s.client.motionPackets);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return connected
+      .filter((s, i) => {
+        const c = s.client;
+        return !(
+          c.motionPackets > before[i] &&
+          c.lastMotionPacketLen === frames * c.motionFrameLen
+        );
+      })
+      .map((s) => s.position);
   }
 
   async waitForDrain(captureId, { timeoutMs = 5000, pollMs = 100 } = {}) {

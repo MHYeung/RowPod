@@ -138,10 +138,12 @@ static uint32_t s_session_transport_base;
 static uint32_t s_session_notify_base;
 static uint16_t s_epoch_rate_hz;
 
-#define FRAME_QUEUE_DEPTH     96
-#define BATCH_MAX_FRAMES       8 /* live 56 Hz; MTU may pack this many */
-#define BATCH_CAPTURE_FRAMES   2 /* v16 ≥224 Hz */
-#define BATCH_FUSED_CAPTURE_FRAMES 4 /* 24 B fused: half the notify rate */
+/* 256 × 32 B ≈ 8 KB: covers a ~450 ms Windows delivery stall at 448 Hz
+ * (≈200 frames) without overwriting the oldest capture samples. */
+#define FRAME_QUEUE_DEPTH    256
+#define BATCH_MAX_FRAMES       8 /* retry buffer size; never exceeded */
+#define BATCH_CAPTURE_FRAMES   4 /* ≥224 Hz: 224 / 4 = 56 notifies/s per pod */
+#define BATCH_LOG_FRAMES       2 /* 112 Hz: 112 / 2 = 56 notifies/s per pod */
 #define CONN_ITVL_MAX_FAST    12 /* 15 ms in 1.25 ms units */
 #define CONN_UPDATE_MAX_TRIES  3
 
@@ -154,6 +156,9 @@ static uint16_t s_frame_tail;
 static uint16_t s_frame_count;
 static uint16_t s_att_mtu = BLE_ATT_MTU_DFLT;
 static uint8_t s_retry_count;
+/* Frames per notify the host proved it receives (0 = no cap). Written by the
+ * session-command handler, read by the sensor task: one byte, no lock. */
+static volatile uint8_t s_host_max_batch;
 static bool s_notify_inflight;
 static uint8_t s_conn_update_tries;
 static uint32_t s_transport_dropped;
@@ -168,10 +173,12 @@ static void notify_session_status(void);
 static void frame_queue_reset(void);
 static void maybe_complete_drain(void);
 static int handle_session_command(uint8_t command, uint32_t capture_id,
-                                  uint8_t rate_hz, uint16_t command_id);
+                                  uint8_t rate_hz, uint8_t flags,
+                                  uint16_t command_id);
 static void request_fast_conn_params(void);
 static uint8_t current_batch_limit(void);
 static bool session_capture_active(void);
+static bool notify_ready(void);
 
 static void request_fast_conn_params(void)
 {
@@ -212,12 +219,42 @@ static bool motion_any_subscribed(void)
 
 static uint8_t current_batch_limit(void)
 {
-    if (session_capture_active() &&
-        sensor_stream_get_rate_hz() >= SENSOR_PROTO_RATE_HIGH_HZ) {
-        return s_motion_fused_subscribed ? BATCH_FUSED_CAPTURE_FRAMES
-                                         : BATCH_CAPTURE_FRAMES;
+    /* Live is one frame per notify: lowest RowPod latency, and a 20-byte v1
+     * frame fits any link. Capture packs frames so each pod stays near the
+     * 56 notifies/s that four Windows links carried without loss. */
+    if (!session_capture_active()) {
+        return 1;
     }
-    return BATCH_MAX_FRAMES;
+    uint16_t rate = sensor_stream_get_rate_hz();
+    uint8_t limit = rate >= SENSOR_PROTO_RATE_HIGH_HZ ? BATCH_CAPTURE_FRAMES
+                    : rate >= SENSOR_PROTO_RATE_LOG_HZ ? BATCH_LOG_FRAMES
+                                                       : 1;
+    uint8_t host = s_host_max_batch;
+    if (host != 0 && host < limit) {
+        limit = host;
+    }
+    return limit;
+}
+
+static uint8_t active_frame_len(void)
+{
+    if (s_motion_fused_subscribed) {
+        return SENSOR_PROTO_FRAME_FUSED_LEN;
+    }
+    return s_motion_v16_subscribed ? SENSOR_PROTO_FRAME_V16_LEN
+                                   : SENSOR_PROTO_FRAME_LEN;
+}
+
+/** Frames that make one full notify: batch limit, capped by ATT payload. */
+static uint8_t batch_target(void)
+{
+    uint16_t payload = s_att_mtu > 3 ? (uint16_t)(s_att_mtu - 3) : 0;
+    uint16_t fit = payload / active_frame_len();
+    uint8_t limit = current_batch_limit();
+    if (fit == 0) {
+        return 1;
+    }
+    return fit < limit ? (uint8_t)fit : limit;
 }
 
 static void deinit_stack_after_init_failure(void)
@@ -241,6 +278,7 @@ static void apply_stream_state(void)
     bool motion = motion_any_subscribed();
     bool coach = s_summary_subscribed && s_stream_requested;
     s_notify_enabled = motion && s_stream_requested;
+    sensor_stream_set_fusion_enabled(s_motion_fused_subscribed);
     sensor_stream_set_enabled(s_notify_enabled || coach);
     if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         set_ui_state(s_notify_enabled ? UI_STATE_STREAMING
@@ -555,7 +593,8 @@ static int motion_access(uint16_t conn_handle, uint16_t attr_handle,
 }
 
 static int handle_session_command(uint8_t command, uint32_t capture_id,
-                                  uint8_t rate_hz, uint16_t command_id)
+                                  uint8_t rate_hz, uint8_t flags,
+                                  uint16_t command_id)
 {
     uint16_t logical_rate = sensor_proto_rate_from_wire(rate_hz);
     s_last_command_id = command_id;
@@ -575,6 +614,7 @@ static int handle_session_command(uint8_t command, uint32_t capture_id,
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
         s_capture_id = capture_id;
+        s_host_max_batch = flags & SENSOR_PROTO_SESSION_CMD_BATCH_MASK;
         s_session_state = SENSOR_PROTO_STATE_PREPARED;
         s_session_first_valid = false;
         s_session_first_sample = 0;
@@ -618,6 +658,8 @@ static int handle_session_command(uint8_t command, uint32_t capture_id,
         /* Freeze the transport boundary: no new capture frames after this. */
         s_accept_transport = false;
         s_drain_complete = false;
+        /* A partial batch (< batch_target) is waiting; draining flushes it. */
+        ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_notify_ev);
         maybe_complete_drain();
     } else if (command == SENSOR_PROTO_SESSION_FINALIZE) {
         if (s_session_state != SENSOR_PROTO_STATE_DRAINING ||
@@ -837,7 +879,8 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             s_last_error_reason = SENSOR_PROTO_ERR_BAD_VERSION;
             return BLE_ATT_ERR_UNLIKELY;
         }
-        return handle_session_command(cmd.command, cmd.capture_id, cmd.rate_hz, 0);
+        return handle_session_command(cmd.command, cmd.capture_id, cmd.rate_hz,
+                                      cmd.flags, 0);
     }
 
     if (attr_handle == s_session_v16_val_handle) {
@@ -856,7 +899,7 @@ static int cfg_access(uint16_t conn_handle, uint16_t attr_handle,
             return BLE_ATT_ERR_UNLIKELY;
         }
         return handle_session_command(cmd.command, cmd.capture_id, cmd.rate_hz,
-                                      cmd.command_id);
+                                      cmd.flags, cmd.command_id);
     }
 
     if (attr_handle == s_status_val_handle) {
@@ -1110,12 +1153,20 @@ static uint8_t prepare_retry_batch(uint8_t frame_len)
     if (s_retry_count != 0) {
         return s_retry_count;
     }
-    uint16_t payload_len = s_att_mtu > 3 ? (uint16_t)(s_att_mtu - 3) : frame_len;
+    uint16_t payload_len = s_att_mtu > 3 ? (uint16_t)(s_att_mtu - 3) : 0;
+    if (payload_len < frame_len) {
+        /* Forcing one oversized frame retries a PDU the peer cannot accept
+         * and the motion counter stays at zero. */
+        static uint32_t skips;
+        if ((skips++ % 64) == 0) {
+            ESP_LOGW(TAG, "frame %u B does not fit ATT payload %u",
+                     (unsigned)frame_len, (unsigned)payload_len);
+        }
+        return 0;
+    }
     uint8_t max_frames = (uint8_t)(payload_len / frame_len);
     uint8_t batch_limit = current_batch_limit();
-    if (max_frames < 1) {
-        max_frames = 1;
-    } else if (max_frames > batch_limit) {
+    if (max_frames > batch_limit) {
         max_frames = batch_limit;
     }
 
@@ -1164,7 +1215,7 @@ static bool notify_batch(uint16_t val_handle, uint8_t frame_len)
      * NimBLE emits it synchronously inside ble_gatts_notify_custom
      * ("attempted"). Mark inflight *before* that call so the callback can
      * clear it. Setting inflight after return deadlocks: one notify, then
-     * the 96-deep queue fills and the browser sees a stale 0 Hz stream.
+     * the frame queue fills and the browser sees a stale 0 Hz stream.
      */
     s_notify_inflight = true;
     int rc = ble_gatts_notify_custom(s_conn_handle, val_handle, om);
@@ -1179,6 +1230,23 @@ static bool notify_batch(uint16_t val_handle, uint8_t frame_len)
     return true;
 }
 
+/*
+ * True when a full batch is queued, a failed batch awaits retry, or a drain
+ * must flush the tail. Without this, every TX-complete event sent whatever
+ * was queued, so captures went out one frame per notify. Called from the
+ * sensor task and the NimBLE host task.
+ */
+static bool notify_ready(void)
+{
+    uint8_t target = batch_target();
+    bool draining = s_session_state == SENSOR_PROTO_STATE_DRAINING;
+    taskENTER_CRITICAL(&s_frame_mux);
+    bool ready = s_retry_count > 0 || s_frame_count >= target ||
+                 (draining && s_frame_count > 0);
+    taskEXIT_CRITICAL(&s_frame_mux);
+    return ready;
+}
+
 static void notify_ev_cb(struct ble_npl_event *ev)
 {
     (void)ev;
@@ -1186,6 +1254,10 @@ static void notify_ev_cb(struct ble_npl_event *ev)
         return;
     }
     if (s_notify_inflight) {
+        return;
+    }
+    if (!notify_ready()) {
+        maybe_complete_drain();
         return;
     }
 
@@ -1209,10 +1281,7 @@ static void notify_ev_cb(struct ble_npl_event *ev)
         return; /* wait for TX complete before the next batch */
     }
 
-    taskENTER_CRITICAL(&s_frame_mux);
-    bool more = s_frame_count > 0 || s_retry_count > 0;
-    taskEXIT_CRITICAL(&s_frame_mux);
-    if (more) {
+    if (notify_ready()) {
         ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_notify_ev);
     } else {
         maybe_complete_drain();
@@ -1320,7 +1389,9 @@ static void on_sample(const sensor_proto_sample_t *sample, void *ctx)
         return;
     }
     frame_queue_push(sample);
-    ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_notify_ev);
+    if (notify_ready()) {
+        ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_notify_ev);
+    }
 }
 
 static esp_err_t start_advertise(void)
@@ -1402,6 +1473,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             s_notify_enabled = false;
             s_session_state = SENSOR_PROTO_STATE_IDLE;
             s_capture_id = 0;
+            s_host_max_batch = 0;
             s_session_first_valid = false;
             s_accept_transport = true;
             s_drain_complete = false;
@@ -1435,9 +1507,11 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         s_notify_enabled = false;
         s_session_state = SENSOR_PROTO_STATE_IDLE;
         s_capture_id = 0;
+        s_host_max_batch = 0;
         s_session_first_valid = false;
         s_accept_transport = true;
         s_drain_complete = false;
+        sensor_stream_set_fusion_enabled(false);
         s_notify_inflight = false;
         sensor_stream_set_enabled(false);
         if (start_advertise() != ESP_OK) {

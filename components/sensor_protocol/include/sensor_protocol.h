@@ -314,6 +314,13 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(sensor_proto_caps_t) == SENSOR_PROTO_CFG_CAPS_LEN, "caps size");
 
 /**
+ * PREPARE flags bits 0..3: most frames per motion notify the host has proved
+ * it receives on this link. 0 keeps the firmware batch (1 live, 2 at 112 Hz,
+ * 4 at ≥224 Hz). Other commands ignore flags.
+ */
+#define SENSOR_PROTO_SESSION_CMD_BATCH_MASK 0x0F
+
+/**
  * @brief Host command for the capture lifecycle (legacy v1).
  *
  * Wire: uint8 ver, command, requested_rate_hz, flags; uint32 capture_id.

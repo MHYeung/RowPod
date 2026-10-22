@@ -28,7 +28,7 @@ idf.py -p COMx flash monitor
 `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
 
 That URL is **RowPod**. IMU lab (plots, HYROX, mag-cal CSV) is
-`…/lab.html?v=16.8`. Actions deploys only `web/ble_plotter/` as the Pages
+`…/lab.html?v=16.9`. Actions deploys only `web/ble_plotter/` as the Pages
 site; firmware stays on `main`. The site URL is still publicly reachable.
 
 **Local fallback:**

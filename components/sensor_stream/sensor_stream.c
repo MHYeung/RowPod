@@ -27,6 +27,9 @@ enum {
 static TaskHandle_t s_task;
 static QueueHandle_t s_latest_q;
 static volatile bool s_enabled;
+/* Written by the BLE host task, read by the stream task (one byte). The
+ * stream task alone touches s_mahony, including the re-init on enable. */
+static volatile bool s_fusion_enabled;
 static volatile uint16_t s_requested_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
 static volatile uint16_t s_applied_rate_hz = SENSOR_PROTO_RATE_LIVE_HZ;
 static volatile bool s_rate_dirty;
@@ -120,6 +123,7 @@ static void stream_task(void *arg)
 {
     (void)arg;
     uint32_t last_drdy_count = 0;
+    bool fusion_was_on = false;
 
     for (;;) {
         if (s_rate_dirty) {
@@ -199,11 +203,18 @@ static void stream_task(void *arg)
             float gx = (float)imu.gx / (float)s_gyro_lsb * DEG_TO_RAD;
             float gy = (float)imu.gy / (float)s_gyro_lsb * DEG_TO_RAD;
             float gz = (float)imu.gz / (float)s_gyro_lsb * DEG_TO_RAD;
-            /* v2 has no magnetometer. mag_valid stays false so yaw is gyro-only. */
-            mahony_update(&s_mahony, gx, gy, gz, ax, ay, az, 0.0f, 0.0f, 0.0f,
-                          false, dt);
-            int16_t q15[4];
-            mahony_get_q15(&s_mahony, q15);
+            int16_t q15[4] = {INT16_MAX, 0, 0, 0};
+            bool fusion = s_fusion_enabled;
+            if (fusion) {
+                if (!fusion_was_on) {
+                    mahony_init(&s_mahony);
+                }
+                /* v2 has no magnetometer. mag_valid stays false so yaw is gyro-only. */
+                mahony_update(&s_mahony, gx, gy, gz, ax, ay, az, 0.0f, 0.0f, 0.0f,
+                              false, dt);
+                mahony_get_q15(&s_mahony, q15);
+            }
+            fusion_was_on = fusion;
 
             sensor_proto_sample_t sample = {
                 .sample_index = index,
@@ -307,6 +318,14 @@ void sensor_stream_set_enabled(bool enabled)
 bool sensor_stream_is_enabled(void)
 {
     return s_enabled;
+}
+
+void sensor_stream_set_fusion_enabled(bool enabled)
+{
+    if (s_fusion_enabled != enabled) {
+        ESP_LOGI(TAG, "Mahony %s", enabled ? "ON" : "OFF");
+    }
+    s_fusion_enabled = enabled;
 }
 
 esp_err_t sensor_stream_set_rate_hz(uint16_t rate_hz)

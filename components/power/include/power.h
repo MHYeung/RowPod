@@ -10,8 +10,9 @@ extern "C" {
 /**
  * @brief Reject a short button wake before the rest of app_main runs.
  *
- * Deep sleep resets the chip, so the two-second hold is measured here, not in
- * the power task. A press that is already released returns to deep sleep.
+ * Deep sleep resets the chip. The bootloader has already used part of the
+ * hold, so a pad that is still low is accepted. A press that is already
+ * released returns to deep sleep.
  * Call this before NVS, BLE, or sensor init.
  */
 void power_boot_gate(void);

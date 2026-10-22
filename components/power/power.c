@@ -6,7 +6,6 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
@@ -72,8 +71,8 @@ static void arm_and_sleep(void)
     /* ESP-IDF 6: GPIO0-5 only. GPIO0 is in that mask. */
     ESP_ERROR_CHECK(esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(
         1ULL << BOARD_BUTTON_GPIO, ESP_GPIO_WAKEUP_GPIO_LOW));
-    ESP_LOGI(TAG, "deep sleep; hold GPIO%d low for %d ms to boot",
-             BOARD_BUTTON_GPIO, BOARD_BUTTON_LONG_PRESS_MS);
+    ESP_LOGI(TAG, "deep sleep; hold GPIO%d low through boot to wake",
+             BOARD_BUTTON_GPIO);
     esp_deep_sleep_start();
 }
 
@@ -84,27 +83,26 @@ void power_boot_gate(void)
     }
 
     release_pad_holds();
-    /* esp_timer starts after the bootloader, so a fast deep-sleep boot
-     * (skip image validation) is what keeps the physical hold near 2 s. */
-    const int64_t need_us = (int64_t)BOARD_BUTTON_LONG_PRESS_MS * 1000;
-    while (esp_timer_get_time() < need_us) {
-        if (gpio_get_level(BOARD_BUTTON_GPIO) != 0) {
-            vTaskDelay(pdMS_TO_TICKS(BOARD_BUTTON_DEBOUNCE_MS));
-            if (gpio_get_level(BOARD_BUTTON_GPIO) == 0) {
-                continue;
-            }
-            /* The SOF hook starts "connected" and clears after a few ticks. */
-            vTaskDelay(pdMS_TO_TICKS(20));
-            if (usb_serial_jtag_is_connected()) {
-                ESP_LOGI(TAG, "short wake, USB host present; continuing boot");
-                return;
-            }
-            ESP_LOGI(TAG, "short button wake ignored");
-            arm_and_sleep();
-        }
-        vTaskDelay(pdMS_TO_TICKS(20));
+    /* ROM and the bootloader already consumed the start of the hold.
+     * esp_timer is still near zero here, so requiring another full 2 s
+     * saw a released button and went straight back to sleep. */
+    vTaskDelay(pdMS_TO_TICKS(BOARD_BUTTON_DEBOUNCE_MS));
+    if (gpio_get_level(BOARD_BUTTON_GPIO) == 0) {
+        ESP_LOGI(TAG, "button held through boot");
+        return;
     }
-    ESP_LOGI(TAG, "button held through boot");
+    vTaskDelay(pdMS_TO_TICKS(BOARD_BUTTON_DEBOUNCE_MS));
+    if (gpio_get_level(BOARD_BUTTON_GPIO) == 0) {
+        ESP_LOGI(TAG, "button held through boot");
+        return;
+    }
+    /* The SOF hook starts "connected" and clears after a few ticks. */
+    if (usb_serial_jtag_is_connected()) {
+        ESP_LOGI(TAG, "short wake, USB host present; continuing boot");
+        return;
+    }
+    ESP_LOGI(TAG, "short button wake ignored");
+    arm_and_sleep();
 }
 
 static void stay_awake(const char *why)

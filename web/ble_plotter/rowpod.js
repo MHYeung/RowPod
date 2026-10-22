@@ -597,6 +597,62 @@ try {
     }
   }
 
+  function podMetaHtml(session) {
+    const tb = session.timebase;
+    const clockHealth =
+      session.status !== "connected" ? "bad" : tb?.ok ? "good" : "warn";
+    const age = performance.now() - (session.lastFrameAt || 0);
+    const flow =
+      session.sensorStatus === "paused"
+        ? "paused"
+        : session.status === "connected" && age > 1500
+          ? "stale"
+          : session.sensorStatus;
+    const angle = trackers.get(session.id)?.snapshot() || {};
+    const motion = session.client.usesV16Motion
+      ? "raw gyro"
+      : session.client.usesFusedMotion
+        ? "mag yaw"
+        : "raw gyro v1";
+    const confLabel = {
+      centring: "row one stroke to centre",
+      auto: "auto centre · est. degrees",
+      zero: "Zero first",
+      yaw: "low — mag heading",
+      ok: "gyro settling",
+      high: "gyro lock",
+    }[angle.confidence || "centring"];
+    const featherChip =
+      angle.angleRef && angle.angleRef !== "none" && angle.featherTrusted === false
+        ? " · feather?"
+        : "";
+    const walk =
+      angle.walkDeg != null && angle.dcStrokes > 0
+        ? ` · walk ${angle.walkDeg.toFixed(0)}°`
+        : "";
+    const feather =
+      angle.angleRef && angle.angleRef !== "none" && Number.isFinite(angle.feather)
+        ? ` · feather ${angle.feather.toFixed(0)}°`
+        : "";
+    return `${session.rate || "—"} Hz · ${motion}
+            <span class="health ${clockHealth}">${flow}</span>
+            ${tb?.ok ? ` · clock ±${tb.rmsMs.toFixed(0)} ms` : " · clock fitting"}
+            · ${confLabel}${walk}${featherChip}${feather}`;
+  }
+
+  function refreshPodMeta() {
+    for (const card of podListEl.querySelectorAll("article[data-pod]")) {
+      const session = registry.get(card.dataset.pod);
+      const meta = card.querySelector(".meta");
+      if (!session || !meta) continue;
+      const html = podMetaHtml(session);
+      if (meta.dataset.sig !== html) {
+        meta.dataset.sig = html;
+        meta.innerHTML = html;
+      }
+    }
+  }
+
   function renderPods() {
     const sessions = registry.list();
     const live = new Set(sessions.map((s) => s.id));
@@ -607,46 +663,13 @@ try {
     for (const session of sessions) {
       const card = document.createElement("article");
       card.className = knownPods.has(session.id) ? "pod-row" : "pod-row enter";
+      card.dataset.pod = session.id;
       knownPods.add(session.id);
       card.style.borderLeftColor = session.color;
-      const tb = session.timebase;
-      const health =
-        session.status !== "connected"
-          ? "bad"
-          : tb?.ok
-            ? "good"
-            : "warn";
-      const angle = trackers.get(session.id)?.snapshot() || {};
-      const motion = session.client.usesV16Motion
-        ? "raw gyro"
-        : session.client.usesFusedMotion
-          ? "mag yaw"
-          : "raw gyro v1";
-      const confLabel = {
-        centring: "row one stroke to centre",
-        auto: "auto centre · est. degrees",
-        zero: "Zero first",
-        yaw: "low — mag heading",
-        ok: "gyro settling",
-        high: "gyro lock",
-      }[angle.confidence || "centring"];
-      const featherChip =
-        angle.angleRef && angle.angleRef !== "none" && angle.featherTrusted === false
-          ? " · feather?"
-          : "";
-      const walk =
-        angle.walkDeg != null && angle.dcStrokes > 0
-          ? ` · walk ${angle.walkDeg.toFixed(0)}°`
-          : "";
       card.innerHTML = `
         <header>
           <span class="name">${session.position}</span>
-          <span class="meta">${session.rate || "—"} Hz · ${motion}
-            <span class="health ${health}">${session.sensorStatus}</span>
-            ${tb?.ok ? ` · clock ±${tb.rmsMs.toFixed(0)} ms` : " · clock fitting"}
-            · ${confLabel}${walk}${featherChip}
-            ${angle.angleRef && angle.angleRef !== "none" && Number.isFinite(angle.feather) ? ` · feather ${angle.feather.toFixed(0)}°` : ""}
-          </span>
+          <span class="meta">${podMetaHtml(session)}</span>
         </header>
         <div class="fields">
           <label>Seat
@@ -917,13 +940,14 @@ try {
   function raf() {
     drawFan();
     renderTable();
+    refreshPodMeta();
     updateHeadline();
     requestAnimationFrame(raf);
   }
   requestAnimationFrame(raf);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=1.5.1").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=1.5.3").catch(() => {});
   }
   setStatus("Ready — add a pod per oar (Android Chrome / desktop Chrome).");
 } catch (e) {

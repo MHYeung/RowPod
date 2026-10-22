@@ -11,6 +11,9 @@ import {
   CFG_STATUS_V16,
   CFG_SVC,
   CFG_SYNC,
+  FRAME_FUSED_LEN,
+  FRAME_V16_LEN,
+  FRAME_V1_LEN,
   MOTION_DATA,
   MOTION_DATA_FUSED,
   MOTION_DATA_V16,
@@ -32,6 +35,7 @@ import {
   encodeSessionCommand,
   encodeSessionCommandV16,
   gyroDpsFromQuat,
+  negotiatedAttMtu,
   rateToWire,
 } from "./protocol.js";
 import { extendSampleIndex } from "./timebase.js";
@@ -91,10 +95,25 @@ export class BleClient {
     this._nextCommandId = 1;
     this._lastQuat = null;
     this._lastSampleIndex = 0;
+    /* Motion notifications actually received; the capture probe compares
+     * the last packet size against the batch the pod was asked to send. */
+    this.motionPackets = 0;
+    this.lastMotionPacketLen = 0;
   }
 
   get deviceId() {
     return this.device?.id || null;
+  }
+
+  /** Bytes per frame on the subscribed motion characteristic. */
+  get motionFrameLen() {
+    if (this.usesFusedMotion) return FRAME_FUSED_LEN;
+    return this.usesV16Motion ? FRAME_V16_LEN : FRAME_V1_LEN;
+  }
+
+  _countMotionPacket(view) {
+    this.motionPackets += 1;
+    this.lastMotionPacketLen = view.byteLength;
   }
 
   _setStatus(text, cls = "") {
@@ -123,13 +142,26 @@ export class BleClient {
   }
 
   /**
-   * Firmware requests ATT MTU exchange on connect. Poll status/caps briefly so
-   * we can choose v16 motion only when a 22-byte frame actually fits.
-   * Also probe the browser's write-without-response size (often the only host
-   * MTU signal Web Bluetooth exposes on Windows).
+   * Smaller of the pod MTU and the browser hint. v16 is 22 bytes and does
+   * not fit the default 20-byte notification payload.
+   */
+  _linkAttMtu() {
+    const hostHint = this.caps?.hostAttMtuHint ?? this._hostAttMtuHint();
+    return negotiatedAttMtu(
+      this.sessionStatus?.attMtu || this.caps?.attMtu,
+      hostHint
+    );
+  }
+
+  /**
+   * Firmware requests ATT MTU exchange on connect. Poll until the browser
+   * hint agrees a 24-byte fused frame fits, or the timeout leaves us on the
+   * default 23. Device-only 247 is not enough: Windows may still deliver
+   * 20-byte notifications.
    */
   async _waitForUsableMtu({ timeoutMs = 2000, pollMs = 150 } = {}) {
     const started = performance.now();
+    let link = 23;
     while (performance.now() - started < timeoutMs) {
       try {
         if (this.statusV16Char || this.statusChar) {
@@ -145,14 +177,16 @@ export class BleClient {
         /* Status may not be ready yet during early GATT setup. */
       }
       const hostHint = this._hostAttMtuHint();
-      if (hostHint && this.caps) {
+      if (this.caps) {
         this.caps = { ...this.caps, hostAttMtuHint: hostHint };
       }
-      const mtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
-      if (mtu >= 27) return mtu;
+      link = this._linkAttMtu();
+      /* Without a host hint above 23 the min() cannot rise; more polling
+       * only spends status reads while the other pods stream. */
+      if (link >= 27 || !(hostHint > 23)) return link;
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
-    return this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
+    return link;
   }
 
   /** Best-effort host MTU hint; Web Bluetooth has no direct ATT MTU API. */
@@ -303,7 +337,8 @@ export class BleClient {
         console.warn(`optional config setup failed at ${stage}`, e);
       }
 
-      const attMtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
+      const attMtu = this._linkAttMtu();
+      const podMtu = this.sessionStatus?.attMtu || this.caps?.attMtu || 23;
       /* RowPod prefers v16 raw gyro. Fused Mahony yaw follows the magnetometer
        * and will walk the oar fan even after a relative-Zero. */
       this.preferRawGyro = Boolean(options.preferRawGyro);
@@ -333,7 +368,7 @@ export class BleClient {
           : "v1";
       this._setStatus(
         `Connected · ${this.advName || "pod"} · proto v${this.protocolVersion}` +
-          ` · motion ${motionLabel} · MTU ${attMtu}` +
+          ` · motion ${motionLabel} · MTU ${attMtu} (pod ${podMtu})` +
           ` · meta v${this.meta.ver} @ ${this.meta.rate_hz} Hz`,
         "ok"
       );
@@ -731,6 +766,7 @@ export class BleClient {
 
   _onNotify(ev) {
     const view = ev.target.value;
+    this._countMotionPacket(view);
     try {
       this._emitFrames(decodeFrames(view, this.meta));
     } catch (e) {
@@ -740,6 +776,7 @@ export class BleClient {
 
   _onNotifyV16(ev) {
     const view = ev.target.value;
+    this._countMotionPacket(view);
     try {
       this._emitFrames(decodeFramesV16(view, this.meta));
     } catch (e) {
@@ -749,6 +786,7 @@ export class BleClient {
 
   _onNotifyFused(ev) {
     const view = ev.target.value;
+    this._countMotionPacket(view);
     try {
       this._emitFrames(decodeFramesFused(view, this.meta));
     } catch (e) {

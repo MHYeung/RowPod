@@ -15,5 +15,9 @@
  * 1.5.0  Connect and go: first stroke centres the fan. Zero is measured-only.
  * 1.5.1  Per-stroke SPM. Gyro-propagated gravity, bias estimate, stroke gates.
  *        Drive index is unitless, not watts.
+ * 1.5.2  Live motion uses the host ATT MTU. A pod-only 247 no longer selects
+ *        a frame Windows drops, which left other seats with no stroke.
+ * 1.5.3  Connect skips the 2 s MTU poll when the host hint cannot raise it.
+ *        Shared client counts motion packets for the lab's batch probe.
  */
-export const ROWPOD_VERSION = "1.5.1";
+export const ROWPOD_VERSION = "1.5.3";

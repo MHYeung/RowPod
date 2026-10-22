@@ -6,7 +6,7 @@ constrains heading; it does not observe translation.
 
 ## Before collecting data
 
-1. Flash the current firmware and open the IMU lab over HTTPS (`/lab.html?v=16.8` locally).
+1. Flash the current firmware and open the IMU lab over HTTPS (`/lab.html?v=16.9` locally).
 2. Connect one pod and select **Calibrate mag (30 s)**.
 3. Move the assembled pod in a slow figure-8 and tumble it through
    nose-down / tail-down / each side-down. Flat table spins leave one axis
@@ -51,7 +51,9 @@ python tools/reconstruct_trajectory.py path\capture.csv `
 This preserves the original CSV and, on v6 debug dumps only, replaces flagged
 engineering samples in memory using neighboring valid samples. To inspect a v6
 repair, export a separate file with `tools/clean_motion_csv.py`. CSV v7 has no
-raw columns; reconstruction uses firmware quaternions instead.
+raw columns; reconstruction uses firmware quaternions instead. CSV v8 from a
+v2 pod has gyro and accel but no quaternion, so reconstruction falls back to
+host AHRS from `gx_dps..gz_dps`.
 
 For a stroke known to return to its exact starting point, add the external
 endpoint constraint:

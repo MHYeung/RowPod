@@ -11,7 +11,9 @@ import {
   SESSION_DRAIN,
   SESSION_STOP,
   SequenceTracker,
+  captureBatchFrames,
   capturePreflight,
+  negotiatedAttMtu,
   decodeCaps,
   decodeFrame,
   decodeFrameFused,
@@ -288,6 +290,14 @@ const meta = {
   assertEq(decoded.firmwareProto, 3, "caps firmware proto fused");
 }
 
+/* --- host and pod MTU must both fit the frame --- */
+{
+  assertEq(negotiatedAttMtu(247, 23), 23, "host default MTU wins over pod 247");
+  assertEq(negotiatedAttMtu(247, null), 23, "missing host hint stays at MTU 23");
+  assertEq(negotiatedAttMtu(247, 247), 247, "agreed large MTU is kept");
+  assertEq(negotiatedAttMtu(23, 247), 23, "pod default MTU is kept");
+}
+
 /* --- preflight --- */
 {
   const bad = capturePreflight({ attMtu: 23, maxBatchFrames: 8, supportsV16: true }, 224, 1);
@@ -302,6 +312,24 @@ const meta = {
   assert(fusedCap.ok, "fused 448 Hz preflight ok at MTU 247");
   assertEq(fusedCap.frameLen, 24, "fused preflight frame length");
   assertEq(fusedCap.batch, 4, "fused capture batches 4 frames");
+}
+
+/* --- four v2 pods: batch keeps each link near 56 notifies/s --- */
+{
+  const v1 = { attMtu: 247, maxBatchFrames: 8 };
+  assertEq(captureBatchFrames(56), 1, "live stays one frame per notify");
+  assertEq(captureBatchFrames(112), 2, "112 Hz packs 2 frames");
+  assertEq(captureBatchFrames(224), 4, "224 Hz packs 4 frames");
+  const boat224 = capturePreflight(v1, 224, 4);
+  assert(boat224.ok, "4 pods at 224 Hz pass at 4 frames per notify");
+  assertEq(boat224.batch, 4, "224 Hz batch on MTU 247");
+  assertEq(boat224.notifyHz, 56, "224 Hz is 56 notifies/s per pod");
+  const fallback = capturePreflight(v1, 112, 4, 1);
+  assert(!fallback.ok, "probe fallback at 1 frame per notify warns for 4 pods");
+  assertEq(fallback.boatNotifyHz, 448, "112 Hz unbatched is 448 notifies/s");
+  const smallMtu = capturePreflight({ attMtu: 23, maxBatchFrames: 8 }, 224, 4);
+  assert(!smallMtu.ok, "MTU 23 cannot batch 224 Hz for 4 pods");
+  assertEq(smallMtu.batch, 1, "MTU 23 fits one v1 frame");
 }
 
 /* --- sync rsp 32-bit sample index (pad bytes 18-19) --- */

@@ -46,7 +46,7 @@ node web/ble_plotter/rowing_angle.test.js
 
 Bring-up, overlay plots, orientation cube, HYROX, Mahony CSV, battery log:
 
-**http://localhost:8080/lab.html?v=16.8**
+**http://localhost:8080/lab.html?v=16.9**
 
 That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 
