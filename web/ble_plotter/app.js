@@ -18,7 +18,7 @@ import { OrientationCube, attitudeFromSensors } from "./orientation.js";
 import { CsvLogger } from "./csv_log.js";
 import { MagCalibrationStore } from "./mag_calibration.js";
 import { HyroxSession, HYROX_PROFILE } from "./hyrox.js";
-import { PodRegistry } from "./pod_registry.js";
+import { BLE_REMEMBER_HINT, PodRegistry, shelfLogCsv, shelfLogRows } from "./pod_registry.js?v=16.13";
 import { StatusLogger } from "./status_log.js";
 
 const statusEl = document.getElementById("status");
@@ -31,6 +31,7 @@ const fleetRateEl = document.getElementById("fleetRate");
 const fleetBatteryEl = document.getElementById("fleetBattery");
 const podListEl = document.getElementById("podList");
 const btnAddPod = document.getElementById("btnAddPod");
+const btnReconnect = document.getElementById("btnReconnect");
 const btnDisconnect = document.getElementById("btnDisconnect");
 const togglesEl = document.getElementById("toggles");
 const logRowsEl = document.getElementById("logRows");
@@ -55,6 +56,7 @@ const testIntervalEl = document.getElementById("testInterval");
 const btnTestStart = document.getElementById("btnTestStart");
 const btnTestStop = document.getElementById("btnTestStop");
 const btnTestDownload = document.getElementById("btnTestDownload");
+const btnShelfDownload = document.getElementById("btnShelfDownload");
 const btnTestClear = document.getElementById("btnTestClear");
 const testElapsedEl = document.getElementById("testElapsed");
 const testRowsEl = document.getElementById("testRows");
@@ -72,7 +74,7 @@ try {
       !btnTestStart || !btnTestStop || !btnTestDownload || !btnTestClear ||
       !testLabelEl || !testIntervalEl || !testElapsedEl || !testRowsEl ||
       !testStateEl || !testLatestEl || !document.getElementById("captureIntegrity")) {
-    throw new Error("Lab HTML outdated — hard-refresh (Ctrl+Shift+R) and open lab.html?v=16.9");
+    throw new Error("Lab HTML outdated — hard-refresh (Ctrl+Shift+R) and open lab.html?v=16.13");
   }
 
   const plotAccel = new MultiPlot(document.getElementById("plotAccel"), ["ax", "ay", "az"], {
@@ -693,7 +695,24 @@ try {
         updateLogUi();
       });
 
-      actions.append(nameInput, btnSave, btnSelect, btnSync, btnDrop);
+      const btnForget = document.createElement("button");
+      btnForget.type = "button";
+      btnForget.textContent = "Forget";
+      btnForget.title = "Disconnect and stop auto-reconnect for this pod";
+      btnForget.addEventListener("click", async () => {
+        for (const p of plots) p.removeSeries(s.id);
+        const forgot = await registry.forget(s.id);
+        updateSelectedStats();
+        updateLogUi();
+        setStatus(
+          forgot
+            ? `Forgot ${s.position}. It will not auto-reconnect until Add pod.`
+            : `Removed ${s.position}. This Chrome cannot forget it — revoke Bluetooth for this site, then reload.`,
+          forgot ? "ok" : "err"
+        );
+      });
+
+      actions.append(nameInput, btnSave, btnSelect, btnSync, btnDrop, btnForget);
       card.append(title, healthRow, liveFigure, metric, actions);
       podListEl.append(card);
 
@@ -869,11 +888,62 @@ try {
     statusLogger.download(`c3_tracker_status_${stamp}.csv`);
   });
 
+  if (btnShelfDownload) {
+    btnShelfDownload.addEventListener("click", () => {
+      const rows = shelfLogRows();
+      if (!rows.length) {
+        setStatus("Shelf log is empty — connect a pod once", "err");
+        return;
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const blob = new Blob([shelfLogCsv()], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `c3_shelf_${stamp}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
   btnTestClear.addEventListener("click", () => {
     if (statusTestTimer) clearInterval(statusTestTimer);
     statusTestTimer = null;
     statusLogger.clear();
   });
+
+  let reconnecting = false;
+  async function reconnectPods() {
+    if (reconnecting) return;
+    if (!navigator.bluetooth?.getDevices) {
+      setStatus(BLE_REMEMBER_HINT, "err");
+      return;
+    }
+    reconnecting = true;
+    if (btnReconnect) btnReconnect.disabled = true;
+    try {
+      setStatus("Reconnecting known pods…");
+      const { connected, missing, unavailable } = await registry.reconnectKnown({
+        onProgress: (label) => setStatus(`Looking for ${label}…`),
+      });
+      if (unavailable) {
+        setStatus(BLE_REMEMBER_HINT, "err");
+        return;
+      }
+      const who = missing.length ? ` · ${missing.join(", ")} asleep or out of range` : "";
+      setStatus(
+        `Reconnected ${connected.length} of ${connected.length + missing.length}${who}`,
+        missing.length ? "err" : "ok"
+      );
+    } catch (e) {
+      setStatus(String(e.message || e), "err");
+    } finally {
+      reconnecting = false;
+      if (btnReconnect) btnReconnect.disabled = false;
+    }
+  }
+
+  if (btnReconnect) btnReconnect.addEventListener("click", () => reconnectPods());
 
   btnAddPod.addEventListener("click", async () => {
     if (btnAddPod.disabled) return;
@@ -1045,7 +1115,8 @@ try {
   updateLogUi();
   updateStatusTestUi();
   updateIntegrityPanel();
-  setStatus("Ready — click Add pod");
+  setStatus("Ready — click Add pod, or wait for known pods");
+  reconnectPods();
 } catch (e) {
   console.error(e);
   setStatus(String(e.message || e), "err");

@@ -4,16 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>C3-Tracker IMU lab</title>
-  <link rel="stylesheet" href="styles.css?v=16.9" />
+  <link rel="stylesheet" href="styles.css?v=16.13" />
 </head>
 <body>
   <header>
     <h1>IMU lab</h1>
-    <p class="sub">Debug capture, plots, orientation, HYROX, battery · lab v16.9 · <a href="./index.html">RowPod</a></p>
+    <p class="sub">Debug capture, plots, orientation, HYROX, battery · lab v16.13 · <a href="./index.html">RowPod</a></p>
   </header>
 
   <section class="controls">
     <button id="btnAddPod" type="button">Add pod</button>
+    <button id="btnReconnect" type="button">Reconnect pods</button>
     <button id="btnDisconnect" type="button" disabled>Disconnect all</button>
     <span id="status" class="status">No pods connected</span>
   </section>
@@ -164,6 +165,7 @@
       <button id="btnTestStop" type="button" disabled>Stop</button>
       <button id="btnTestDownload" type="button" disabled>Download status CSV</button>
       <button id="btnTestClear" type="button" disabled>Clear</button>
+      <button id="btnShelfDownload" type="button">Shelf log CSV</button>
     </section>
     <section class="test-kpis">
       <div>Elapsed: <strong id="testElapsed">0:00</strong></div>
@@ -189,6 +191,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=16.9"></script>
+  <script type="module" src="app.js?v=16.13"></script>
 </body>
 </html>

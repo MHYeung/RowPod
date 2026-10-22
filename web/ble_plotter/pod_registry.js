@@ -1,11 +1,50 @@
-import { BleClient } from "./ble_client.js";
+import { BleClient, BLE_REMEMBER_HINT } from "./ble_client.js?v=16.13";
 import { MotionOutlierFilter } from "./outlier_filter.js";
 import { POD_COLORS, capturePreflight } from "./protocol.js";
 import { PodTimeBase } from "./timebase.js";
 
 const STORE_KEY = "c3_pod_labels_v1";
 const SEAT_STORE_KEY = "c3_pod_seats_v1";
+const SHELF_KEY = "c3_shelf_log_v1";
+const SHELF_MAX = 2000;
 const RESYNC_PERIOD_MS = 4000;
+
+export { BLE_REMEMBER_HINT };
+
+function loadShelf() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(SHELF_KEY) || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendShelf(entry) {
+  const rows = loadShelf();
+  rows.push(entry);
+  localStorage.setItem(SHELF_KEY, JSON.stringify(rows.slice(-SHELF_MAX)));
+}
+
+/** Connect-time pack readings. Coarse; the µA meter is the shelf-life result. */
+export function shelfLogRows() {
+  return loadShelf();
+}
+
+export function shelfLogCsv() {
+  const header = "iso,device_id,position,battery_mV,battery_percent,battery_valid";
+  const lines = loadShelf().map((row) =>
+    [
+      row.iso || "",
+      row.device_id || "",
+      String(row.position || "").replace(/,/g, " "),
+      row.mV ?? "",
+      row.percent ?? "",
+      row.valid ? "1" : "0",
+    ].join(",")
+  );
+  return [header, ...lines].join("\n") + "\n";
+}
 
 function loadLabels() {
   try {
@@ -100,6 +139,71 @@ export class PodRegistry {
     this._emitStats();
   }
 
+  /**
+   * Reconnect pods this browser already paired. One GATT setup at a time.
+   * @returns {Promise<{connected: object[], missing: string[]}>}
+   */
+  async reconnectKnown(options = {}) {
+    if (!BleClient.canRememberDevices()) {
+      return { connected: [], missing: [], unavailable: true };
+    }
+    const devices = await BleClient.knownDevices();
+    const connected = [];
+    const missing = [];
+    for (const device of devices) {
+      const existing = this.sessions.get(device.id);
+      if (existing?.status === "connected") continue;
+      if (existing) this.sessions.delete(device.id);
+      const label = device.name || this.labels[device.id]?.position || device.id;
+      if (options.onProgress) options.onProgress(label);
+      /* A scan beside a live connection is what left the new pod's motion
+       * queue empty. Watch only while nothing is connected. */
+      const live = [...this.sessions.values()].some((s) => s.status === "connected");
+      if (!live) {
+        const seen = await BleClient.waitForAdvertising(device, options.advertiseMs || 4000);
+        if (seen === false) {
+          missing.push(label);
+          continue;
+        }
+        if (seen === true) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+      const paused = [];
+      for (const session of this.sessions.values()) {
+        if (session.status !== "connected") continue;
+        try {
+          await session.client.pauseNotifications();
+          paused.push(session);
+        } catch (error) {
+          console.warn("pause before reconnect failed", session.position, error);
+        }
+      }
+      try {
+        const session = await this.addPod({
+          device,
+          preferRawGyro: options.preferRawGyro,
+        });
+        if (session.client.motionPackets === 0) {
+          await session.client.ensureMotionFlow();
+        }
+        connected.push(session);
+      } catch (error) {
+        console.warn("reconnect failed", label, error);
+        missing.push(label);
+      } finally {
+        for (const session of paused) {
+          try {
+            await session.client.resumeNotifications();
+          } catch (error) {
+            console.warn("resume after reconnect failed", session.position, error);
+          }
+        }
+      }
+    }
+    return { connected, missing, unavailable: false };
+  }
+
   async addPod(options = {}) {
     if (this._addPromise) return this._addPromise;
     this._addPromise = this._addPod(options);
@@ -115,6 +219,7 @@ export class PodRegistry {
     let heldSessions = [];
     try {
       await client.connect({
+        device: options.device,
         preferRawGyro: options.preferRawGyro,
         beforeGattConnect: async () => {
           /* Soft-hold only: keep CCCD so existing pods keep sampling. Hard
@@ -248,6 +353,16 @@ export class PodRegistry {
 
     this.sessions.set(id, session);
     if (!this.selectedId) this.selectedId = id;
+    if (session.battery?.valid) {
+      appendShelf({
+        device_id: id,
+        position,
+        iso: new Date().toISOString(),
+        mV: session.battery.millivolts,
+        percent: session.battery.percent,
+        valid: true,
+      });
+    }
     this.labels[id] = { ...(this.labels[id] || {}), position };
     saveLabels(this.labels);
 
@@ -556,6 +671,28 @@ export class PodRegistry {
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
     throw new Error("drain timed out before queue emptied");
+  }
+
+  /**
+   * Disconnect and revoke the browser permission so reconnect skips this pod.
+   * @returns {Promise<boolean>} false when Chrome cannot forget devices.
+   */
+  async forget(id) {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    let forgot = false;
+    try {
+      forgot = await session.client.forgetDevice();
+    } catch (error) {
+      console.warn("forget failed", session.position, error);
+    }
+    this.sessions.delete(id);
+    if (this.selectedId === id) {
+      this.selectedId = this.sessions.keys().next().value || null;
+    }
+    this._stopResyncLoopIfEmpty();
+    this._emit();
+    return forgot;
   }
 
   async disconnect(id) {

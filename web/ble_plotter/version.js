@@ -19,5 +19,11 @@
  *        a frame Windows drops, which left other seats with no stroke.
  * 1.5.3  Connect skips the 2 s MTU poll when the host hint cannot raise it.
  *        Shared client counts motion packets for the lab's batch probe.
+ * 1.5.4  Reconnect pods already paired in this browser, without the chooser.
+ *        One angle-number card per pod. Shelf log records pack mV at connect.
+ * 1.5.5  Stop the advertisement watch before the next pod connects, so the
+ *        second auto-connected pod still receives motion frames.
+ * 1.5.6  Pause the live pod while the next one subscribes, and rewrite the
+ *        motion CCCD. The second auto-connect was linking with an empty queue.
  */
-export const ROWPOD_VERSION = "1.5.3";
+export const ROWPOD_VERSION = "1.5.6";

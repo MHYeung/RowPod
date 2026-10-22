@@ -16,5 +16,5 @@
     "--compile-commands-dir=c:\\Users\\admin\\Desktop\\esp_projects\\esp32c3_motion_tracker\\build"
   ],
   "idf.flashType": "UART",
-  "idf.port": "COM35"
+  "idf.port": "COM33"
 }

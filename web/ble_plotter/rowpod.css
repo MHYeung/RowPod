@@ -404,6 +404,35 @@ tr.warn-spread td { color: var(--warning); }
 td.late-out { color: var(--warning); font-weight: 650; }
 td.late-in { color: var(--green); }
 
+.angle-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+.angle-card {
+  background: var(--brand-paper);
+  border: 1px solid var(--border);
+  border-top-width: 4px;
+  border-radius: 14px;
+  padding: 0.55rem 0.7rem 0.65rem;
+  display: grid;
+  gap: 0.15rem;
+  box-shadow: var(--shadow);
+  font-variant-numeric: tabular-nums;
+}
+.angle-card header { margin: 0; font-weight: 600; }
+.angle-card .theta {
+  margin: 0;
+  font-size: 1.8rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+.angle-card .row { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.angle-card .hint { margin: 0.15rem 0 0; color: var(--warning); font-size: 0.75rem; }
+@media (min-width: 840px) {
+  .angle-cards { grid-template-columns: repeat(4, 1fr); }
+}
+
 .pod-assign {
   display: grid;
   gap: 0.5rem;

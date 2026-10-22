@@ -1,5 +1,5 @@
 import { RATE_LIVE_HZ, PROFILE_ROWING, POD_COLORS } from "./protocol.js";
-import { PodRegistry } from "./pod_registry.js";
+import { BLE_REMEMBER_HINT, PodRegistry } from "./pod_registry.js";
 import { OarAngleTracker } from "./rowing_angle.js";
 import { CrewSync, downloadStrokeCsv, coachCatchCue, formatCatchVsStroke, catchDtVsRefMs, featherDtVsRefMs } from "./rowing_crew.js";
 import {
@@ -28,6 +28,8 @@ import { bladeArcM, driveArcDeg, spanCmToM } from "./rowing_length.js";
 
 const statusEl = document.getElementById("status");
 const btnAddPod = document.getElementById("btnAddPod");
+const btnReconnect = document.getElementById("btnReconnect");
+const angleCardsEl = document.getElementById("angleCards");
 const btnDisconnect = document.getElementById("btnDisconnect");
 const btnZero = document.getElementById("btnZero");
 const btnStart = document.getElementById("btnStart");
@@ -848,30 +850,72 @@ try {
     }
   };
 
+  async function finishPodSetup(session) {
+    try {
+      await session.client.setWorkoutProfile(PROFILE_ROWING);
+    } catch (_) {
+      /* Pre-v17 firmware rejects profile 2; live rate is enough. */
+    }
+    await session.client.setRate(RATE_LIVE_HZ);
+    session.timebase.setNominalHz(RATE_LIVE_HZ);
+    assignPod(session, {
+      fromSeat:
+        getBoatClass(rig.boatClass).kind === "sweep" &&
+        session.hand !== "bow" &&
+        session.hand !== "stroke",
+    });
+    const stroke = registry.list().find((s) => s.seat === "stroke");
+    if (stroke) crew.setReference(stroke.id);
+    return session.client.usesV16Motion
+      ? "raw gyro v16"
+      : session.client.usesFusedMotion
+        ? "fused yaw (walks near iron)"
+        : "v1 gyro";
+  }
+
+  function reconnectSummary(connected, missing) {
+    const total = connected.length + missing.length;
+    const who = missing.length ? ` · ${missing.join(", ")} asleep or out of range` : "";
+    return `Reconnected ${connected.length} of ${total}${who}`;
+  }
+
+  let reconnecting = false;
+  async function reconnectPods() {
+    if (reconnecting) return;
+    if (BLE_REMEMBER_HINT && !navigator.bluetooth?.getDevices) {
+      setStatus(BLE_REMEMBER_HINT, "err");
+      return;
+    }
+    reconnecting = true;
+    if (btnReconnect) btnReconnect.disabled = true;
+    try {
+      setStatus("Reconnecting known pods…");
+      const { connected, missing, unavailable } = await registry.reconnectKnown({
+        preferRawGyro: true,
+        onProgress: (label) => setStatus(`Looking for ${label}…`),
+      });
+      if (unavailable) {
+        setStatus(BLE_REMEMBER_HINT, "err");
+        return;
+      }
+      for (const session of connected) await finishPodSetup(session);
+      setStatus(
+        reconnectSummary(connected, missing),
+        missing.length ? "err" : "ok"
+      );
+    } catch (e) {
+      setStatus(String(e.message || e), "err");
+    } finally {
+      reconnecting = false;
+      if (btnReconnect) btnReconnect.disabled = false;
+    }
+  }
+
   btnAddPod.addEventListener("click", async () => {
     try {
       setStatus("Pick a pod…");
       const session = await registry.addPod({ preferRawGyro: true });
-      try {
-        await session.client.setWorkoutProfile(PROFILE_ROWING);
-      } catch (_) {
-        /* Pre-v17 firmware rejects profile 2; live rate is enough. */
-      }
-      await session.client.setRate(RATE_LIVE_HZ);
-      session.timebase.setNominalHz(RATE_LIVE_HZ);
-      assignPod(session, {
-        fromSeat:
-          getBoatClass(rig.boatClass).kind === "sweep" &&
-          session.hand !== "bow" &&
-          session.hand !== "stroke",
-      });
-      const stroke = registry.list().find((s) => s.seat === "stroke");
-      if (stroke) crew.setReference(stroke.id);
-      const motion = session.client.usesV16Motion
-        ? "raw gyro v16"
-        : session.client.usesFusedMotion
-          ? "fused yaw (walks near iron)"
-          : "v1 gyro";
+      const motion = await finishPodSetup(session);
       setStatus(
         `${session.position} connected · ${motion}. Assign a seat, then row. Zero only for measured degrees.`,
         session.client.usesFusedMotion ? "err" : "ok"
@@ -880,6 +924,12 @@ try {
       setStatus(String(e.message || e), "err");
     }
   });
+
+  if (btnReconnect) {
+    btnReconnect.addEventListener("click", () => {
+      reconnectPods();
+    });
+  }
 
   btnDisconnect.addEventListener("click", async () => {
     await registry.disconnectAll();
@@ -937,17 +987,70 @@ try {
     updateHeadline();
   });
 
+  const angleCardCache = new Map();
+
+  function renderAngleCards() {
+    if (!angleCardsEl) return;
+    const sessions = registry.list().filter(sessionInSample);
+    const seen = new Set();
+    sessions.forEach((session, index) => {
+      seen.add(session.id);
+      let card = angleCardCache.get(session.id);
+      if (!card) {
+        card = document.createElement("article");
+        card.className = "angle-card";
+        card.innerHTML =
+          `<header><span class="seat"></span></header>` +
+          `<p class="theta"></p>` +
+          `<p class="row feather"></p>` +
+          `<p class="row ends"></p>` +
+          `<p class="row arc"></p>` +
+          `<p class="hint"></p>`;
+        angleCardCache.set(session.id, card);
+      }
+      const angle = trackers.get(session.id)?.snapshot() || {};
+      const estimated = angle.angleRef === "auto";
+      const catchEv = angle.lastCatch;
+      const finishEv = angle.lastFinish;
+      const arc = angle.arcDeg;
+      card.style.borderTopColor = session.color;
+      setText(card.querySelector(".seat"), session.seat || session.position);
+      setText(card.querySelector(".theta"), fmtEstDeg(angle.theta, estimated));
+      setText(card.querySelector(".feather"), `Feather ${fmtDeg(angle.feather)}`);
+      setText(
+        card.querySelector(".ends"),
+        `Catch ${fmtEstDeg(catchEv?.theta, estimated)} · finish ${fmtEstDeg(finishEv?.theta, estimated)}`
+      );
+      setText(
+        card.querySelector(".arc"),
+        `Arc ${fmtEstDeg(arc, estimated)} · blade ${fmtM(bladeArcM(arc, rig.outboardM))}`
+      );
+      const waiting = !catchEv || !finishEv;
+      setText(card.querySelector(".hint"), waiting ? "row one stroke to centre" : "");
+      const at = angleCardsEl.children[index];
+      if (at !== card) angleCardsEl.insertBefore(card, at || null);
+    });
+    for (const [id, card] of angleCardCache) {
+      if (!seen.has(id)) {
+        card.remove();
+        angleCardCache.delete(id);
+      }
+    }
+  }
+
   function raf() {
     drawFan();
     renderTable();
+    renderAngleCards();
     refreshPodMeta();
     updateHeadline();
     requestAnimationFrame(raf);
   }
   requestAnimationFrame(raf);
+  reconnectPods();
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=1.5.3").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=1.5.6").catch(() => {});
   }
   setStatus("Ready — add a pod per oar (Android Chrome / desktop Chrome).");
 } catch (e) {

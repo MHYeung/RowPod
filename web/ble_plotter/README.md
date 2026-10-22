@@ -7,7 +7,7 @@ Portrait coach UI for oar-mounted C3-Tracker pods. Chrome/Edge only
 
 GitHub Pages on the private Pro repo (static `web/ble_plotter/` only):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.5.1`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.5.6`
 
 Setup: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
 Coach/athlete map: [`docs/ROWPOD_ECOSYSTEM.md`](../../docs/ROWPOD_ECOSYSTEM.md).
@@ -19,15 +19,19 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open **http://localhost:8080/?v=1.5.1** (not `file://`). Hard-refresh if the
-header is not **1.5.1**. Installed PWAs must be deleted and re-added when
-the cache name changes (`rowpod-1.5.1`).
+Open **http://localhost:8080/?v=1.5.6** (not `file://`). Hard-refresh if the
+header is not **1.5.6**. Installed PWAs must be deleted and re-added when
+the cache name changes (`rowpod-1.5.6`).
 
 Old `/rowpod.html` bookmarks redirect here.
 
 ## Coach flow
 
-1. **Add pod** once per oar (up to 6 links on one phone).
+1. **Add pod** once per oar (up to 6 links on one phone). After that, a reload
+   reconnects those pods with no chooser. If the status line names
+   `chrome://flags/#enable-web-bluetooth-new-permissions-backend`, set that
+   flag to Enabled and relaunch Chrome. **Reconnect pods** retries any that
+   were asleep.
 2. Set boat class, Stroke sits, seat, and hand. Type inboard / outboard (cm).
 3. Row. The first stroke centres the fan. Tap **Zero (measured)** only when you need degrees from a squared perpendicular pose.
 4. **Start piece** → row → **Stop** → **Stroke CSV**.
@@ -46,7 +50,7 @@ node web/ble_plotter/rowing_angle.test.js
 
 Bring-up, overlay plots, orientation cube, HYROX, Mahony CSV, battery log:
 
-**http://localhost:8080/lab.html?v=16.9**
+**http://localhost:8080/lab.html?v=16.13**
 
 That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 

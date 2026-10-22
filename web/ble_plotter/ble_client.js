@@ -40,6 +40,10 @@ import {
 } from "./protocol.js";
 import { extendSampleIndex } from "./timebase.js";
 
+/** Shown when this Chrome build cannot list devices the user already paired. */
+export const BLE_REMEMBER_HINT =
+  "Reconnect needs chrome://flags/#enable-web-bluetooth-new-permissions-backend set to Enabled. Relaunch Chrome, then Add pod once per oar.";
+
 export class BleClient {
   constructor() {
     this.device = null;
@@ -103,6 +107,70 @@ export class BleClient {
 
   get deviceId() {
     return this.device?.id || null;
+  }
+
+  /** True when Chrome can reconnect a device the chooser already granted. */
+  static canRememberDevices() {
+    return typeof navigator.bluetooth?.getDevices === "function";
+  }
+
+  /** True when a granted device can be watched for advertising before connect. */
+  static canWatchAdvertisements() {
+    return typeof BluetoothDevice !== "undefined" &&
+      typeof BluetoothDevice.prototype?.watchAdvertisements === "function";
+  }
+
+  /**
+   * Devices this origin already paired whose name is a C3 pod.
+   * An empty name is kept: some Chrome builds omit it until GATT connects,
+   * and the chooser only offered C3 pods.
+   */
+  static async knownDevices() {
+    if (!BleClient.canRememberDevices()) return [];
+    const devices = await navigator.bluetooth.getDevices();
+    return devices.filter((device) => {
+      const name = device.name || "";
+      if (!name) return true;
+      return name.startsWith("C3-T-") || name.startsWith("C3-Tracker");
+    });
+  }
+
+  /**
+   * Wait until the granted device advertises.
+   * @returns {Promise<boolean|null>} true if an advertisement arrived, false
+   *   if the watch timed out (pod asleep), null if watching is unavailable
+   *   and the caller should try GATT connect.
+   */
+  static async waitForAdvertising(device, timeoutMs = 4000) {
+    if (!device || typeof device.watchAdvertisements !== "function") return null;
+    const abort = new AbortController();
+    let settled = false;
+    const seen = new Promise((resolve) => {
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        device.removeEventListener("advertisementreceived", onAdv);
+        resolve(value);
+      };
+      /* Stop the scan before resolving. A watch left running makes the next
+       * pod's GATT connect succeed and then deliver no motion notifications. */
+      const onAdv = () => {
+        finish(true);
+        abort.abort();
+      };
+      device.addEventListener("advertisementreceived", onAdv);
+      abort.signal.addEventListener("abort", () => finish(false), { once: true });
+    });
+    const timer = setTimeout(() => abort.abort(), timeoutMs);
+    try {
+      await device.watchAdvertisements({ signal: abort.signal });
+      return await seen;
+    } catch (_) {
+      abort.abort();
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Bytes per frame on the subscribed motion characteristic. */
@@ -212,15 +280,20 @@ export class BleClient {
       if (!navigator.bluetooth) {
         throw new Error("Web Bluetooth unavailable — use Chrome/Edge on localhost or HTTPS");
       }
-      /* OR filters: service UUID and/or name prefix (name is in scan response). */
-      this.device = await navigator.bluetooth.requestDevice({
-        filters: [
-          { services: [MOTION_SVC] },
-          { namePrefix: "C3-Tracker" },
-          { namePrefix: "C3-T-" },
-        ],
-        optionalServices: [MOTION_SVC, CFG_SVC],
-      });
+      if (options.device) {
+        this.device = options.device;
+        stage = "knownDevice";
+      } else {
+        /* OR filters: service UUID and/or name prefix (name is in scan response). */
+        this.device = await navigator.bluetooth.requestDevice({
+          filters: [
+            { services: [MOTION_SVC] },
+            { namePrefix: "C3-Tracker" },
+            { namePrefix: "C3-T-" },
+          ],
+          optionalServices: [MOTION_SVC, CFG_SVC],
+        });
+      }
       this.advName = this.device.name || "";
       this.device.addEventListener("gattserverdisconnected", this._boundDisconnect);
       if (options.beforeGattConnect) {
@@ -377,20 +450,11 @@ export class BleClient {
       this.missingFrames = 0;
       setStage("subscribe motion");
       if (this.usesFusedMotion) {
-        await this.dataFusedChar.startNotifications();
-        this.dataFusedChar.addEventListener(
-          "characteristicvaluechanged",
-          this._boundNotifyFused
-        );
+        await this._forceNotify(this.dataFusedChar, this._boundNotifyFused);
       } else if (this.usesV16Motion) {
-        await this.dataV16Char.startNotifications();
-        this.dataV16Char.addEventListener(
-          "characteristicvaluechanged",
-          this._boundNotifyV16
-        );
+        await this._forceNotify(this.dataV16Char, this._boundNotifyV16);
       } else {
-        await this.dataChar.startNotifications();
-        this.dataChar.addEventListener("characteristicvaluechanged", this._boundNotify);
+        await this._forceNotify(this.dataChar, this._boundNotify);
       }
       this._motionNotifications = true;
       this._stage = "ready";
@@ -611,6 +675,34 @@ export class BleClient {
     });
   }
 
+  /**
+   * Drop this browser's permission for the pod. getDevices() will not
+   * return it, so auto-reconnect will skip it until Add pod pairs it again.
+   * @returns {Promise<boolean>} false when this Chrome has no forget().
+   */
+  async forgetDevice() {
+    const device = this.device;
+    try {
+      await this._stopMotionNotifications();
+    } catch (_) {
+      /* Characteristic may already be gone. */
+    }
+    if (device?.gatt?.connected) {
+      try {
+        device.gatt.disconnect();
+      } catch (_) {
+        /* Already down. */
+      }
+    }
+    this._cleanup();
+    this.device = null;
+    if (device && typeof device.forget === "function") {
+      await device.forget();
+      return true;
+    }
+    return false;
+  }
+
   async disconnect() {
     return this._queueGatt(async () => {
       await this._stopMotionNotifications();
@@ -672,6 +764,28 @@ export class BleClient {
     this._motionNotifications = false;
   }
 
+  /**
+   * Windows drops the motion CCCD write on a second connection if it thinks
+   * notifications are already on, or while another pod is notifying. A read
+   * plus stop/start forces the subscribe event the pod needs to queue frames.
+   */
+  async _forceNotify(char, handler) {
+    if (!char) return;
+    try {
+      await char.readValue();
+    } catch (_) {
+      /* Notify-only characteristics reject the read. The rewrite still runs. */
+    }
+    try {
+      await char.stopNotifications();
+    } catch (_) {
+      /* Not subscribed yet. */
+    }
+    await char.startNotifications();
+    char.removeEventListener("characteristicvaluechanged", handler);
+    char.addEventListener("characteristicvaluechanged", handler);
+  }
+
   async pauseNotifications() {
     return this._queueGatt(async () => {
       if (!this._motionNotifications) return false;
@@ -684,20 +798,11 @@ export class BleClient {
     return this._queueGatt(async () => {
       if (this._motionNotifications) return false;
       if (this.usesFusedMotion && this.dataFusedChar) {
-        await this.dataFusedChar.startNotifications();
-        this.dataFusedChar.addEventListener(
-          "characteristicvaluechanged",
-          this._boundNotifyFused
-        );
+        await this._forceNotify(this.dataFusedChar, this._boundNotifyFused);
       } else if (this.usesV16Motion && this.dataV16Char) {
-        await this.dataV16Char.startNotifications();
-        this.dataV16Char.addEventListener(
-          "characteristicvaluechanged",
-          this._boundNotifyV16
-        );
+        await this._forceNotify(this.dataV16Char, this._boundNotifyV16);
       } else if (this.dataChar) {
-        await this.dataChar.startNotifications();
-        this.dataChar.addEventListener("characteristicvaluechanged", this._boundNotify);
+        await this._forceNotify(this.dataChar, this._boundNotify);
       } else {
         return false;
       }
@@ -705,6 +810,22 @@ export class BleClient {
       this.resyncSequence();
       return true;
     });
+  }
+
+  /**
+   * Windows sometimes accepts the second auto-connect and then never
+   * delivers motion notifies. One CCCD restart recovers the stream.
+   * @returns {Promise<boolean>} true when a motion packet arrived
+   */
+  async ensureMotionFlow(waitMs = 700) {
+    const before = this.motionPackets;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    if (this.motionPackets > before) return true;
+    await this.pauseNotifications();
+    await this.resumeNotifications();
+    const restarted = this.motionPackets;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return this.motionPackets > restarted;
   }
 
   /**

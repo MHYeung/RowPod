@@ -136,3 +136,46 @@ Wake checks on the same setup:
 Download-mode check, from the ESP32-C3 strapping-pin section: GPIO2 (battery
 divider at VBAT/2) and GPIO8 (IMU INT1) are strapping pins. With a battery
 fitted, GPIO9 held low plus RST must still enter the serial download boot.
+
+## Shelf life: v2 deep sleep vs v1 light sleep
+
+v1 stayed in light sleep between sessions, so the pack needed a recharge
+every few days. v2 deep-sleeps after three minutes with no BLE link (USB
+unplugged). The number that decides shelf life is sleep current. The
+dashboard cannot see a sleeping pod.
+
+### Meter (this is the result)
+
+1. Read the pack capacity off the label (mAh).
+2. Put the multimeter on its µA range in series with the battery lead.
+   Fit a bypass jumper across the meter. Wake and advertising current is
+   far above a µA shunt and will brown the pod out if it has to pass
+   through that shunt.
+3. USB unplugged. Wake the v2 pod (hold GPIO0 until it advertises), leave
+   the bypass fitted, and wait until the three-minute idle policy sleeps
+   it. Confirm the blue LED is off and the serial port is gone.
+4. Remove the bypass, wait 30 s, and read. Repeat three times. Restore
+   the bypass before the next wake.
+5. Repeat the same pack in the v1 idle light-sleep state.
+6. Estimated shelf days = `0.8 × pack_mAh / (sleep_µA / 1000) / 24`.
+   The 0.8 keeps a margin above empty. This is not a measured capacity.
+
+Compare the meter with the datasheet sum in the deep-sleep table above
+(C3 deep sleep, XC6220 Iq, the 4.5 µA divider, QMI8658A power-down,
+TP4056 battery-pin leakage). Expect tens of µA. Hundreds of µA, or about
+a milliamp, means something is still running.
+
+### Seven-day cross-check (coarse)
+
+The lab Battery test tab downloads a **Shelf log CSV**. Every successful
+connect appends one row (`iso`, device id, position, mV, percent) from the
+battery read that happens before motion starts. ADC noise is larger than
+one night of self-discharge, so this log only checks direction.
+
+1. Charge both a v1 and a v2 pod. Rest 20–30 minutes.
+2. Once a day for 7 days: wake the pod, open the lab (known pods reconnect
+   without the chooser), then let it go back to sleep. Do not leave it
+   connected.
+3. Download the shelf log. Pass: the v2 millivolt drop over 7 days stays
+   inside the scatter of a single reading, and the v1 drop is clearly
+   larger. The meter reading above is still the result to quote.
