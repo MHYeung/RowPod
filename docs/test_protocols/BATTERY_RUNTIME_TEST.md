@@ -33,7 +33,7 @@ defined cutoff and recharge under supervision.
   meter is only useful if the product is deliberately powered through that USB
   path; it does not characterize normal LiPo discharge.
 - Stable room temperature; record it in the test notes.
-- Chrome or Edge running the dashboard v14 or newer.
+- Chrome or Edge running the IMU lab (`lab.html?v=16.13` or newer).
 - A reliable charging supply and a timer.
 
 ## Test matrix
@@ -43,8 +43,12 @@ Run every mode at least three times:
 1. Advertising idle, disconnected, until its deep-sleep policy engages.
    Unplug USB first. A host on USB-Serial/JTAG keeps the pod awake.
 2. Connected live monitor at 56 Hz.
-3. One connected pod, continuous 224 Hz logging.
-4. Two connected pods, continuous 112 Hz logging per pod.
+3. One connected pod, continuous 448 Hz logging (lab default; 4 frames per
+   notify). If the PREPARE probe fails, the host falls back to 112 Hz × 1
+   frame — record the applied rate from the integrity panel, not the
+   intended one.
+4. Two connected pods, continuous 224 Hz logging per pod (lab default for
+   2+ pods). Same probe fallback.
 
 The browser status logger only covers connected modes. Use the external meter
 and manual timestamps for advertising/deep-sleep testing.
@@ -66,10 +70,11 @@ and manual timestamps for advertising/deep-sleep testing.
 ## Connected-mode procedure
 
 1. Connect the required pod(s).
-2. Set the intended mode: live 56 Hz, one-pod 224 Hz logging, or two-pod
-   112 Hz logging.
+2. Set the intended mode: live 56 Hz, one-pod 448 Hz logging, or two-pod
+   224 Hz logging. The lab has no rate picker; connect the matching number
+   of pods so `chooseLogRateHz` selects that profile.
 3. Open **Battery test** and enter an unambiguous label, for example
-   `run01-one-pod-224Hz-22C`.
+   `run01-one-pod-448Hz-22C`.
 4. Select a 60-second status interval. Use 30 seconds only when diagnosing a
    fast failure or voltage sag.
 5. Start the status log. Confirm an immediate row appears for every pod.

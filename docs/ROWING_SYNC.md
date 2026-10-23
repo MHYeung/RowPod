@@ -1,6 +1,6 @@
 # RowPod — oar angle and crew sync
 
-Host UI version is **1.4.4** (`web/ble_plotter/version.js`). Major bumps (v2)
+Host UI version is **1.5.6** (`web/ble_plotter/version.js`). Major bumps (v2)
 are a human decision; this file tracks what the current host actually does.
 
 | Version | What changed |
@@ -15,6 +15,10 @@ are a human decision; this file tracks what the current host actually does.
 | 1.4.2 | Catch late/early vs stroke on the live page; does not wait for a finish. |
 | 1.4.3 | Drive arc + blade metres from outboard; gated feather-on Δt vs stroke after finish. |
 | 1.4.4 | Pages root is RowPod (`index.html`); IMU lab parked at `lab.html`. |
+| 1.5.0 | Connect and go: first stroke centres the fan. Zero is measured-only. |
+| 1.5.1 | Per-stroke SPM; gyro-propagated gravity; bias estimate (clamped ±5 deg/s). Drive index is unitless. |
+| 1.5.2–1.5.3 | Live motion uses the host ATT MTU; skip the 2 s MTU poll when the host cannot raise it. |
+| 1.5.4–1.5.6 | Reconnect known pods without the chooser. Pause + CCCD rewrite while the next pod subscribes so the second link is not an empty queue. |
 
 RowPod turns the C3-Tracker pod into an **oar-mounted catch/finish angle
 sensor**. Coaches and researchers get per-seat catch angle, finish angle, arc,
@@ -200,7 +204,7 @@ catch_dt_vs_ref_ms, finish_dt_vs_ref_ms, feather_dt_vs_ref_ms,
 crew_catch_spread_ms, crew_finish_spread_ms, in_sync, match_quality, spm,
 timebase_rms_ms, clock_status`
 
-The CSV header also stamps `# rowpod_version=1.4.4`, `# boat_class=`,
+The CSV header also stamps `# rowpod_version=1.5.6`, `# boat_class=`,
 `# stroke_sits=`, `# inboard_m=`, and `# outboard_m=`. `blade_arc_m` is
 outboard × arc (radians); empty when a finish is missing. `t_feather_ms` is
 the first |feather| up-cross through 45° after finish; empty when there is
@@ -222,6 +226,8 @@ the stroke is not rated (single seat, missing finish, or untrusted clock).
 | `web/ble_plotter/rowing_crew.js` | matching, in-sync %, CSV |
 | `web/ble_plotter/rowing_length.js` | drive arc and blade metres from outboard |
 | `web/ble_plotter/version.js` | `ROWPOD_VERSION` |
+| `web/ble_plotter/ble_client.js` | GATT, `getDevices` reconnect, CCCD pause/rewrite |
+| `web/ble_plotter/pod_registry.js` | multi-pod sessions, `reconnectKnown`, soft hold vs hard pause |
 | `components/sensor_protocol` | `PROFILE_ROWING = 2` |
 
 ```sh

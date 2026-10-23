@@ -1,11 +1,13 @@
 # RowPod — next development (ingested brief)
 
 **Ingested:** 1 September 2026 from `AGENT_PROMPT_ROWPOD_NEXT.md`.  
-**Current ship:** host **1.5.0** (connect and go). The first complete stroke
-centres the fan on a nominal rig midpoint. Zero is optional and measured.
-Angle timing, arc, blade metres, and gated feather-on are unchanged.
-Do not flash firmware for this minor. Next named slice is **1.6 Feather +
-blade flags**, only when the human names it.
+**Current ship:** host **1.5.6** (connect and go, plus reconnect). The first
+complete stroke centres the fan on a nominal rig midpoint. Zero is optional
+and measured. 1.5.4–1.5.6 reconnect known pods without the chooser. Angle
+timing, arc, blade metres, and gated feather-on are unchanged.
+Do not flash firmware for a host-only minor. Next named slice is **1.6
+Feather + blade flags**, only when the human names it. Hardware pod v2
+(no magnetometer) has already shipped; that is not host major 2.
 
 ## Human gate (this repo)
 
@@ -13,9 +15,10 @@ blade flags**, only when the human names it.
 |------|--------|
 | 1.3.0 boat class + **Stroke sits** + per-seat **hand** | Shipped. Overlay confirmed on water (2 September 2026 2x CSVs: both catches negative / finishes positive). |
 | Host **1.4 Honest Crew Clock** | Shipped in `version.js` 1.4.0. Water CSV still needed to confirm the matcher (no 500 ms alias, empty `in_sync` when a finish is missing). |
-| Host **1.5 Connect and go** | Shipped. First stroke centres the fan. Zero is measured-only. |
+| Host **1.5 Connect and go** | Shipped (1.5.0–1.5.6). First stroke centres the fan. Zero is measured-only. Reconnect without the chooser. |
 | Host **1.6 Feather + blade flags** | Next *software* slice. Do not start until the human says so. |
-| Firmware **major / v2** | **Owner decision only.** This 1.4 host slice does **not** start a firmware major. |
+| Hardware **pod v2** | Shipped (no magnetometer, `hw_rev=2`, three-minute deep sleep). |
+| Host **major 2** | **Owner decision only.** A 1.5 host patch does **not** start a host major. |
 
 **Product bet (do not dilute):** a crew that is 40 ms apart at the catch is
 leaking speed no force curve will save. Make that 40 ms number true on 2–4
@@ -66,7 +69,7 @@ Hardware / schematic context (do not redesign):
 
 Live hosted UI (reference only; implement in the repo):
 
-- `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
+- `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.5.6`
 
 ---
 
@@ -111,6 +114,7 @@ RowPod v1 is **host-owned angle**: the pod sends IMU + `sample_index`; the brows
 - 1.2.0 no finish-jump DC leak; catch/finish state machine; blade feather
 - 1.3.0 boat class; stroke-side / bow-side; overlay sign from Stroke sits
 - 1.4.4 Pages root is RowPod; IMU lab at `lab.html`
+- 1.5.0–1.5.6 connect and go; reconnect known pods without the chooser
 
 Patches = small detector/UI fixes. Minors = behaviour a coach notices. PWA cache name and `?v=` follow the same number.
 
