@@ -1,6 +1,6 @@
 # RowPod ecosystem — coaches, athletes, and how we are building it
 
-**Status:** RowPod host **1.4.4** (17 September 2026).  Pages root is RowPod; IMU lab is `lab.html`.  
+**Status:** RowPod host **1.5.6** (23 October 2026).  Pages root is RowPod; IMU lab is `lab.html`.  
 **Hardware:** C3-Tracker pod v2 (ESP32-C3FH4, QMI8658A IMU, no magnetometer).  
 **This document** is the product-level map: what the whole stack does for a
 rowing coach or athlete, what is trustworthy today, and how development is
@@ -73,7 +73,7 @@ integrity when something looks wrong on the water.
 
 ---
 
-## 3. Features a coach or athlete can use today (RowPod 1.4.4)
+## 3. Features a coach or athlete can use today (RowPod 1.5.6)
 
 ### 3.1 Live picture
 
@@ -138,7 +138,11 @@ is where the blade is in the stroke.
 1. Wake pods (hold the button ~2 s from deep sleep). Open RowPod on
    **Android Chrome** or desktop **Chrome/Edge** over HTTPS or `localhost`.
 2. **Add pod** once per oar (target **2–4** links; an eight will not fit on one
-   phone).
+   phone). Later reloads reconnect those permissions with no chooser.
+   **Reconnect pods** retries any that were asleep. If Chrome cannot list
+   granted devices, enable
+   `chrome://flags/#enable-web-bluetooth-new-permissions-backend` and
+   relaunch. Lab **Forget** drops a permission so that pod is skipped.
 3. Set boat class and Stroke sits. Assign seats and hands.
 4. Type **inboard / outboard** (cm). Outboard is pin to blade tip; it scales
    blade metres. Changing scull ↔ sweep fills defaults unless you typed spans.
@@ -148,7 +152,7 @@ is where the blade is in the stroke.
    perpendicular pose. Auto-centre cannot separate a short catch plus a long
    finish from an arc that is just shifted.
 7. **Stroke CSV** — long format, one row per seat per stroke, filename
-   `rowpod_1.5.0_strokes_….csv`. `angle_ref` is `auto` or `zero`.
+   `rowpod_1.5.6_strokes_….csv`. `angle_ref` is `auto` or `zero`.
 
 **Arc** (finish − catch), catch timing, and in-sync do not depend on Zero.
 
@@ -195,8 +199,8 @@ yaw for oar angle. Feather is a **separate** gravity-about-shaft signal.
 - **Phone:** Android Chrome, or a laptop in the launch. **iPhone Safari cannot
   connect.** A PWA install on Android still needs Chrome’s Web Bluetooth.
 - **Hosted UI:** GitHub Pages  
-  `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`  
-  Local: `http://localhost:8080/?v=1.4.4` after
+  `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.5.6`  
+  Local: `http://localhost:8080/?v=1.5.6` after
   `python -m http.server 8080` in `web/ble_plotter/`.
 - **Firmware:** flash once with ESP-IDF; most RowPod angle/UI work is
   **host-only** (hard-refresh the page). Profile 2 and 32-bit sync seq need a
@@ -268,7 +272,7 @@ crew timing).
 ## 7. Current development process
 
 This is how the project is actually moving, so a coach or a contributor knows
-what “we shipped 1.4.0” means.
+what “we shipped 1.5.6” means.
 
 ### 7.1 Split of labour
 
@@ -304,8 +308,11 @@ platform breaks (native app, new radio, new mount) — not an automatic bump.
 | 1.4.2 | Catch late/early vs stroke on the live page; finish not required for that cue. |
 | 1.4.3 | Drive arc + blade metres; gated feather-on timing vs stroke after finish. |
 | 1.4.4 | Pages root is RowPod; IMU lab parked at `lab.html`. |
+| 1.5.0 | Connect and go: first stroke centres the fan. Zero is measured-only. |
+| 1.5.1 | Per-stroke SPM; gyro-propagated gravity; unitless drive index. |
+| 1.5.4–1.5.6 | Reconnect known pods; pause + CCCD rewrite so the second auto-connect still streams. |
 
-Patches (1.0.x) are small detector/UI fixes. Minors (1.1–1.4) are
+Patches (1.0.x) are small detector/UI fixes. Minors (1.1–1.5) are
 behaviour a coach will notice. The PWA cache name and `?v=` query follow the
 same number so phones do not keep yesterday’s JavaScript.
 
@@ -374,9 +381,11 @@ Copy this; it is the same ladder the software is tested against.
 Canonical next-step brief (priority, non-negotiables, done-when tests):
 [`ROWPOD_NEXT.md`](ROWPOD_NEXT.md).
 
-**Human gate:** 1.3 overlay confirmed on water. Host 1.4 matcher is in the
-tree; confirm on a new CSV (no 500 ms alias, empty `in_sync` without two
-finishes). Firmware major / v2 remains an owner decision.
+**Human gate:** 1.3 overlay confirmed on water. Host 1.4 matcher and 1.5
+connect-and-go are in the tree; confirm the matcher on a new CSV (no 500 ms
+alias, empty `in_sync` without two finishes). Hardware/firmware **pod v2**
+(no magnetometer, `hw_rev=2`, deep sleep) has shipped. Host **major 2**
+(native app, new mount, protocol break) remains an owner decision.
 
 | Slice | Host | Coach question |
 |-------|------|----------------|

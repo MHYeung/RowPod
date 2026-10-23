@@ -97,6 +97,12 @@ Supported sensor-native rates are 56, 112, 224, and 448 Hz. One-byte GATT
 rate fields cannot store 448, so that profile is encoded as wire value `255`
 (`rate_mask` bit 3). Hosts must decode `255 → 448` before computing `sample_ms`.
 
+The IMU lab (`lab.html` / `chooseLogRateHz`) has no rate picker. It requests
+448 Hz for one connected pod and 224 Hz for two or more, with `PREPARE`
+flags set to 4 frames per notify so each pod stays near 56 notifies/s
+(112/s at 448 Hz). The 500 ms probe in the capture lifecycle above is what
+can drop the session to 112 Hz × 1 frame. RowPod live stays 56 Hz.
+
 ## CSV provenance
 
 CSV v8 logs body accel `ax_g..az_g` and gyro `gx_dps..gz_dps` for every pod.

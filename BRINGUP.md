@@ -63,7 +63,7 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/lab.html?v=16.9` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead. RowPod (rowing) is `http://localhost:8080/?v=1.4.4`.
+Open `http://localhost:8080/lab.html?v=16.13` in Chrome/Edge (not `file://`). Hard-refresh if Add pod looks dead. RowPod (rowing) is `http://localhost:8080/?v=1.5.6`. Known pods reconnect on reload; **Reconnect pods** retries any that were asleep.
 
 ## Known hardware notes
 

@@ -1,11 +1,17 @@
 # RowPod — test & code checklist (next session)
 
+Dated **1.4.4** water session (September 2026). Current host is **1.5.6**
+(`web/ble_plotter/version.js`, cache `rowpod-1.5.6`). Keep this bench order,
+but open `?v=1.5.6`. Expect connect-and-go (first stroke centres the fan;
+Zero is measured-only) and **Reconnect pods** for already-paired devices.
+Do not treat the 1.4.4 stamps in the checkboxes below as current.
+
 Use this the next time you sit down with the pods. Last bench file
 (`rowpod_1.4.1_strokes_2026-09-02T16-36-42`) **passed the clock** and **failed
 the sweep**: ~23° of arc, catch on the finish side of 0°, ~22° of Zero offset
 between pods. Do not skip to an eight.
 
-Host to use: **1.4.4**. Do **not** flash firmware.
+Host to use: **1.5.6**. Do **not** flash firmware for a host-only check.
 
 ---
 

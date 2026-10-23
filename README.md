@@ -25,10 +25,10 @@ idf.py -p COMx flash monitor
 **Hosted (recommended, GitHub Pro):** after the one-time Pages setup in
 [`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md), open:
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
+`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.5.6`
 
 That URL is **RowPod**. IMU lab (plots, HYROX, mag-cal CSV) is
-`…/lab.html?v=16.9`. Actions deploys only `web/ble_plotter/` as the Pages
+`…/lab.html?v=16.13`. Actions deploys only `web/ble_plotter/` as the Pages
 site; firmware stays on `main`. The site URL is still publicly reachable.
 
 **Local fallback:**
@@ -38,7 +38,9 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=1.4.4`, click **Add pod**, select a tracker.
+Open `http://localhost:8080/?v=1.5.6`, click **Add pod**, select a tracker.
+A reload reconnects pods this browser already paired; **Reconnect pods**
+retries any that were asleep. See [`web/ble_plotter/README.md`](web/ble_plotter/README.md).
 
 Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 [`docs/ROWPOD_ECOSYSTEM.md`](docs/ROWPOD_ECOSYSTEM.md). Next slices:

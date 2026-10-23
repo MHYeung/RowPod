@@ -39,6 +39,28 @@ Old `/rowpod.html` bookmarks redirect here.
 In-sync % stays empty until two seats have a catch and a finish on a trusted
 clock. iPhone Safari cannot use Web Bluetooth.
 
+### Reconnect and stale streams
+
+`navigator.bluetooth.getDevices()` only lists pods this origin already
+paired. The page calls it on load; **Reconnect pods** runs the same path.
+
+- The first reconnect may `watchAdvertisements` for 4 s. A timeout means the
+  pod is asleep or out of range — wake it (hold GPIO0 ~2 s) and retry. The
+  host does **not** watch once any pod is already live: a scan beside a live
+  GATT link left the next pod's motion queue empty (1.5.5).
+- While the next pod subscribes, live pods pause motion notifies, then the
+  host rewrites the CCCD (`stop`/`startNotifications`) and resumes (1.5.6).
+  **Add pod** while already connected uses a soft hold instead: CCCD stays
+  on so firmware keeps sampling, and gap counters are ignored for that
+  window. A hard pause on that path left the first pod **stale** /
+  **degraded** forever.
+- **stale** / **stale stream** means no motion frame for 1.5 s. Lifetime
+  gaps stay in the lab integrity panel. Lab **degraded** uses recent misses
+  and clears after about two seconds of clean frames (`rate × 2`).
+- Lab **Forget** calls `BluetoothDevice.forget()` so auto-reconnect skips
+  that pod until **Add pod** pairs it again. Plain **Remove** / Disconnect
+  keeps the permission.
+
 Unit tests (no browser):
 
 ```sh
@@ -85,7 +107,10 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 ### Rates
 
 - RowPod live: **56 Hz** (`PROFILE_ROWING = 2`)
-- Lab logging: **448 Hz** (one pod) or **112 Hz** (2+ pods)
+- Lab logging (CSV log and HYROX): **448 Hz** (one pod) or **224 Hz** (2+
+  pods), 4 frames per notify. After `PREPARE`, the host waits 500 ms for a
+  packet of exactly `batch × frame_len`. If any link drops it, capture
+  restarts at **112 Hz** with one frame per notify.
 - Software sync estimates clock offset for CSV; it is not sample-level IMU
   phase lock. RowPod stamps samples from a fitted `sample_index → host ms`
   model (see `docs/ROWING_SYNC.md`).
