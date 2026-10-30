@@ -1,5 +1,7 @@
-/* Host replay of sample_capture CSV through rowing_metrics.
- * Build: gcc -DROWPOD_HOST -O2 -o rowing_parity_host tools/rowing_parity_host.c components/rowing_metrics/rowing_metrics.c -lm
+/* Host replay of a lab CSV through rowing_metrics.
+ * Build: gcc -DROWPOD_HOST -O2 -Icomponents/rowing_metrics/include \
+ *   -o rowing_parity_host tools/rowing_parity_host.c \
+ *   components/rowing_metrics/rowing_metrics.c -lm
  */
 #include "rowing_metrics.h"
 

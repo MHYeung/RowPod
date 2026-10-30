@@ -72,7 +72,7 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 │   ├── qmi8658/          IMU driver
 │   ├── mahony/           On-device AHRS (gyro + accel; yaw is not mag-corrected)
 │   ├── sensor_protocol/  BLE wire frames (v1 / v16 / fused / coach summary) + UUIDs
-│   ├── rowing_metrics/   On-pod catch/finish/arc (port of the browser tracker)
+│   ├── rowing_metrics/   On-pod catch/finish/arc for …1005 (not the PWA path)
 │   ├── sensor_stream/    Native-clock 56/112/224/448 Hz DRDY stream + Mahony
 │   ├── ble_tracker/      NimBLE peripheral + queued packet batching / drain
 │   ├── ui/               Blue status LED + button gestures
@@ -80,6 +80,10 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 │   └── power/            Three-minute deep-sleep policy (GPIO0 wake)
 └── web/ble_plotter/      Local Web Bluetooth UI
 ```
+
+`tools/rowing_parity_host.c` and `tools/rowing_parity.mjs` replay a lab CSV
+through the C detector and the JS tracker. Wire layout and the 56/112 Hz feed
+gate: [docs/SESSION_PROTOCOL.md](docs/SESSION_PROTOCOL.md) (coach summary).
 
 ## Adding a component
 

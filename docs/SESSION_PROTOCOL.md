@@ -32,8 +32,8 @@ new clock.
 - `9b7e1001-…` — legacy notify/read, 20-byte frames (batched by MTU)
 - `9b7e1003-…` — v16 notify/read, 22-byte frames (batched by MTU)
 - `9b7e1004-…` — fused notify/read, 24-byte frames (Q15 quaternion + accel + mag)
-- `9b7e1005-…` — coach summary notify/read, 20 bytes, one packet per finished stroke (not batched). Layout is in the speed-coach `docs/ble_sensors.md`. Capability bit `0x40`
-- `9b7e200c-…` — coach control write: zero / set side / clear. The phone app does not use it
+- `9b7e1005-…` — coach summary notify/read, 20 bytes, one packet per finished stroke (not batched). Layout below. Capability bit `0x40`
+- `9b7e200c-…` — coach control write: zero / set side / clear. The phone PWA does not use it
 - When more than one motion CCCD is enabled, firmware prefers fused, then v16,
   then v1, so radio load is not doubled
 - Live sends one frame per notify. A capture sends only full batches: 2 frames
@@ -116,3 +116,96 @@ Request: 8-byte `uint64 client_ms`. Response: 20 bytes —
 `sample_index`** at offset 16. Older firmware wrote a 16-bit seq plus two pad
 zeros; hosts must still accept that. RowPod fits `hostMs = a * sampleIndex + b`
 from repeated exchanges instead of timestamping BLE notify arrival.
+
+## Coach summary (`…1005`)
+
+On-pod catch/finish for a **speed-coach** central that will not take the raw
+56 Hz stream. `rowing_metrics` is a C port of the browser `OarAngleTracker`
+core (`ω · ĝ`, catch↔finish state machine). It runs on the I2C/sensor task,
+never from a BLE callback. Capability `…2009` bit `0x40`
+(`SENSOR_PROTO_CAP_FLAG_COACH_SUMMARY`).
+
+The pod is a single peripheral. The coach and the browser cannot attach at
+the same time. RowPod / IMU lab `protocol.js` does not define `…1005` or
+`…200c`; those pages never subscribe.
+
+A read of `…1005` returns the last packed packet (zeros until the first
+finish). Notifies are not batched and fit a default ATT MTU of 23.
+
+### Wire (20 B, little-endian)
+
+`sensor_proto_summary_t`, `ver = 1`. Angles are decidegrees (0.1°).
+
+| Off | Type | Field | Notes |
+|-----|------|-------|-------|
+| 0 | u8 | `ver` | `1` |
+| 1 | u8 | `flags` | `0x01` zeroed, `0x02` feather trusted, `0x04` valid (always set on notify) |
+| 2 | u16 | `stroke_idx` | increments on each finished drive; saturates at 65535 |
+| 4 | u32 | `sample_index` | **catch** sample, not finish |
+| 8 | i16 | `catch_ddeg` | |
+| 10 | i16 | `finish_ddeg` | |
+| 12 | u16 | `arc_ddeg` | `abs(finish − catch) × 10` |
+| 14 | u16 | `spm_x10` | catch-to-catch × 10; 0 if the gap is outside 0.3–10 s |
+| 16 | u16 | `drive_ms` | finish − catch; 0 if the gap is not in (0, 10 s) |
+| 18 | u8 | `batt_pct` | **255** when `battery_read` fails |
+| 19 | u8 | `reserved` | 0 |
+
+### When the detector runs
+
+`ble_tracker` converts each IMU sample to g / deg/s and calls
+`rowing_metrics_push` only when the **applied** rate is 56 or 112 Hz
+(`rate > 0 && rate ≤ SENSOR_PROTO_RATE_LOG_HZ`). Lab 224 / 448 Hz capture
+does not feed the detector, so `…1005` stays silent even if subscribed.
+
+Subscribing to `…1005` without a motion CCCD sets the live 56 Hz profile and
+keeps the IMU on (`s_summary_subscribed && s_stream_requested`). A connected
+single-tap still pauses the IMU, which also stops summaries. Connecting the
+coach does not enable fused Mahony.
+
+Knobs in `rowing_metrics.c` (not host 1.5.1+): refractory 350 ms, peak
+`|ω| ≥ 25 deg/s`, min arc 20°, gravity LP τ = 0.35 s, DC leak on drive only.
+There is **no** gyro-bias estimate and **no** first-stroke auto-centre.
+
+### Control (`…200c`)
+
+Write 1–2 bytes. The PWA never writes this. After a successful command the
+pod stores sign / zeroed / shaft axis / feather ref in NVS (`pod` namespace:
+`oar_sign`, `oar_zero`, `oar_axis`, `oar_fref`) and restores them on boot.
+
+| Byte 0 | Byte 1 | Effect |
+|--------|--------|--------|
+| `1` ZERO | — | Measured zero: current `ω` integral is 0°, shaft axis from gravity, feather 0° from this pose |
+| `2` SET_SIGN | `0` stroke (`sign = +1`) or `1` bow (`sign = −1`) | Flips `ω · ĝ` so catch-to-finish is positive for that mount |
+| `3` CLEAR | — | Drops the in-progress catch/finish. Does **not** clear zero or NVS |
+
+Until ZERO, notifies still fire (`VALID`) but `ZEROED` is clear and degrees
+are an unreferenced integral. The speed coach must zero; the pod will not
+infer perpendicular from the first stroke.
+
+### On-pod vs RowPod host
+
+Do not treat `…1005` catch/finish as the same numbers as a RowPod stroke CSV.
+From host **1.5.1** the browser estimates gyro bias (clamped ±5 deg/s) and
+propagates gravity with the gyro; **1.5.0** auto-centres the fan on the first
+stroke. The C detector has neither. A live PWA piece and a coach-summary
+piece on the same outing will disagree in degrees even when timing is close.
+
+### Parity replay
+
+`tools/rowing_parity_host.c` and `tools/rowing_parity.mjs` replay a lab CSV
+(`synced_ms`, `ax_g..az_g`, `gx_dps..gz_dps`) through the C detector and the
+JS tracker after an immediate `zero()`. They print matching `F catch finish
+arc t` lines. There is no `sample_capture/` tree in this repo; pass a real
+CSV. The gcc line needs the public include path:
+
+```sh
+gcc -DROWPOD_HOST -O2 -Icomponents/rowing_metrics/include \
+  -o rowing_parity_host tools/rowing_parity_host.c \
+  components/rowing_metrics/rowing_metrics.c -lm
+./rowing_parity_host path/to/capture.csv > /tmp/pod.txt
+node tools/rowing_parity.mjs path/to/capture.csv > /tmp/js.txt
+diff /tmp/pod.txt /tmp/js.txt
+```
+
+This checks the shared `ω · ĝ` core. It does not replay host-only bias,
+auto-centre, crew match, or the packed `…1005` bytes.
