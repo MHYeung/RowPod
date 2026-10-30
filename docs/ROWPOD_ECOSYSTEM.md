@@ -26,11 +26,11 @@ Oar shaft  →  C3-Tracker pod  →  BLE (56 Hz live)  →  Chrome / Edge
               same pod       →  BLE (one summary per stroke) → ESP32-S3 speed coach
 ```
 
-The speed coach is a second central, not a second phone. The pod still accepts only one connection, so the coach and the browser cannot be attached at the same time. The coach subscribes to `…1005` and does not take the raw 56 Hz stream. See the speed-coach `docs/ble_sensors.md` for the 20-byte layout.
+The speed coach is a second central, not a second phone. The pod still accepts only one connection, so the coach and the browser cannot be attached at the same time. The coach subscribes to `…1005` and does not take the raw 56 Hz stream. The 20-byte layout, `…200c` zero/side/clear, NVS oar calib, and the 56/112 Hz feed gate live in [`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md) (coach summary). The speed-coach repo's `docs/ble_sensors.md` should match that struct; this repo is the firmware source of truth. RowPod does not subscribe and does not write `…200c`.
 
 | Piece | Role for rowing |
 |--------|------------------|
-| Pod firmware | Samples IMU on a native clock, advertises as `C3-T-XXXX`, streams raw gyro (v16) or fused attitude, battery, and a software sync handshake. Also notifies one coach summary per stroke on `…1005`. |
+| Pod firmware | Samples IMU on a native clock, advertises as `C3-T-XXXX`, streams raw gyro (v16) or fused attitude, battery, and a software sync handshake. Also notifies one coach summary per stroke on `…1005` (on-pod detector, measured Zero only — not the host 1.5 auto-centre / bias path). |
 | Rowing profile (`PROFILE_ROWING = 2`) | Host tag: keep **56 Hz** so several pods can share the radio. Not the 448 Hz HYROX capture policy. |
 | RowPod PWA (`index.html`) | Catch/finish angles, crew overlay, in-sync %, stroke CSV. |
 | IMU lab (`lab.html`) | Fleet health, raw plots, orientation cube, HYROX, session CSV, battery tests. |

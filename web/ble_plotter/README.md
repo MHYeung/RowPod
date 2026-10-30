@@ -46,6 +46,17 @@ node web/ble_plotter/protocol.test.js
 node web/ble_plotter/rowing_angle.test.js
 ```
 
+On-pod vs JS parity (lab CSV with `synced_ms` / `ax_g` / `gx_dps`; both tools
+call `zero()` first — this is not a live 1.5.1 bias replay):
+
+```sh
+gcc -DROWPOD_HOST -O2 -Icomponents/rowing_metrics/include \
+  -o rowing_parity_host tools/rowing_parity_host.c \
+  components/rowing_metrics/rowing_metrics.c -lm
+./rowing_parity_host path/to/capture.csv
+node tools/rowing_parity.mjs path/to/capture.csv
+```
+
 ## IMU lab
 
 Bring-up, overlay plots, orientation cube, HYROX, Mahony CSV, battery log:
@@ -63,7 +74,11 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 - Notify `…1003`: one or more packed 22-byte LE frames (`sample_index + 9×int16`) — v16
 - Read `…1002`: scale metadata (`flags` bit0 = multi mode)
 - RowPod and the IMU lab prefer `…1003` when capabilities advertise it
-- Notify `…1005`: 20-byte coach summary, one packet per finished stroke. The phone app does not subscribe. Capability flag `0x40` on `…2009` means it is present. The speed coach uses it instead of the raw stream
+- Notify `…1005`: 20-byte coach summary, one packet per finished stroke. This
+  PWA does not subscribe (`protocol.js` has no UUID). Capability flag `0x40`
+  on `…2009` means it is present. The speed coach uses it instead of the raw
+  stream. Layout, `…200c`, and the 56/112 Hz feed gate:
+  [`docs/SESSION_PROTOCOL.md`](../../docs/SESSION_PROTOCOL.md)
 
 ### Configuration / sync
 
@@ -80,7 +95,9 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 - Write `…200a`: v16 12-byte session command with command id
 - Read/Notify `…200b`: v16 56-byte status with applied rate, drain barrier,
   32-bit sample boundaries, and queue high-water
-- Write `…200c`: speed-coach control. `1` zero, `2` + side byte (`0` stroke, `1` bow), `3` clear the in-progress stroke
+- Write `…200c`: speed-coach control (this PWA never writes it). `1` measured
+  zero, `2` + side byte (`0` stroke `sign=+1`, `1` bow `sign=-1`), `3` clear
+  the in-progress stroke only. Zero/side persist in NVS and survive reboot.
 
 ### Rates
 
