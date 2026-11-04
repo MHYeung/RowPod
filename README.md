@@ -19,7 +19,7 @@ A pod is a board, a lithium-polymer cell, and a printed shell. The cell sits on 
 <img src="download/images/IMG_3364.jpg" alt="Parts of a pod: lithium cell, board, and the two halves of the white shell." width="440">
 <img src="download/images/IMG_3363.jpg" alt="Board on the cell with the blue LED lit, next to the open shell." width="260">
 
-The enclosure, the battery connector, and the oar clamp are print files on MakerWorld, linked under Hardware. They are not an official Concept2 product.
+The shell and the oar clamp are printed from [MakerWorld](https://makerworld.com/en/models/3547180-rowpod-open-source-oar-sensor#profileId-4057732). They are not an official Concept2 product.
 
 ## Flash a pod
 
@@ -102,11 +102,11 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 
 ## Hardware
 
-The enclosure, battery connector, and oar mount are not in this repo. Print files are published on MakerWorld:
+The printed parts are not in this repo. One MakerWorld model has the two-part pod housing and the Concept2 oar mount:
 
-- Pod housing: MakerWorld link to be added
-- Battery connector: MakerWorld link to be added
-- Mount for a Concept2 oar: MakerWorld link to be added
+[RowPod · Open-Source Oar Sensor](https://makerworld.com/en/models/3547180-rowpod-open-source-oar-sensor#profileId-4057732)
+
+The cell is a 400 mAh 403030 LiPo, soldered to the board. It is not a printed part. The mount is not an official Concept2 product.
 
 Board files, revision RowPod2 V1.0. Order the Gerber zip as a 4-layer board.
 

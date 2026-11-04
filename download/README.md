@@ -72,7 +72,7 @@ flowchart TB
 - Each card shows the pod, the crew name, the side, the arc, and the battery percentage. The photo shows `C3-T-C6D6`, unassigned, stroke-side, and the pack at 68%.
 - **Zero**, **Add pod**, and **Start** are along the top. **Stroke CSV** shares the strokes from the current piece. **Disconnect all** drops every link.
 
-The clamp holds the same housing on a Concept2 oar sleeve. The pod's LED faces out so you can see that it is awake. Print files for the housing and this mount are on MakerWorld, linked from the repository README, not stored here.
+The clamp holds the same housing on a Concept2 oar sleeve. The pod's LED faces out so you can see that it is awake. Print files for the housing and this mount are on [MakerWorld](https://makerworld.com/en/models/3547180-rowpod-open-source-oar-sensor#profileId-4057732), not stored here.
 
 ![Pod clipped into the oar mount. The Record fan shows the live angle and the seat card shows catch, finish, and arc.](images/oar-mount.jpg)
 
