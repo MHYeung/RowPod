@@ -1,10 +1,25 @@
-# ESP32-C3 Motion Tracker
+# RowPod
 
-> gstack ESP-IDF project — modular, fast, embedded-first.
+<img src="download/images/thumbnail.png" alt="Fulcrum RowPod. The pod sits in a printed oar clamp with the blue LED lit." width="480">
 
-Athletic / portable tracker on **ESP32-C3FH4** with a QMI8658A IMU,
-CA-C03 chip antenna, and a local Web Bluetooth plotter. RowPod v2 has no
-magnetometer.
+RowPod is a set of oar-mounted pods and a tablet page for the crew. Each pod measures oar angle with an **ESP32-C3FH4** and a QMI8658A, and sends it over Bluetooth. The tablet draws every connected oar from catch to finish. RowPod v2 has no magnetometer.
+
+The Record page is the one used on the water. This piece has four pods. The fan is the live angle, the graph is the last few seconds, and catch spread is how far apart the catches are.
+
+<img src="download/images/app_record_page.png" alt="Record page during a piece. Four pods, fan from catch to finish, angle graph, catch spread 121 ms." width="680">
+
+The current tablet build is **1.5.4** (version code 7), package `org.rowpod.app`:
+
+[download/rowpod_1.5.4.apk](download/rowpod_1.5.4.apk)
+
+How to install it and use the six screens: [download/README.md](download/README.md). Allow “install unknown apps” on the tablet. The web dashboard below is the other host.
+
+A pod is a board, a lithium-polymer cell, and a printed shell. The cell sits on two foam strips. The blue LED shows the pod is awake.
+
+<img src="download/images/IMG_3364.jpg" alt="Parts of a pod: lithium cell, board, and the two halves of the white shell." width="440">
+<img src="download/images/IMG_3363.jpg" alt="Board on the cell with the blue LED lit, next to the open shell." width="260">
+
+The enclosure, the battery connector, and the oar clamp are print files on MakerWorld, linked under Hardware. They are not an official Concept2 product.
 
 ## Requirements
 
@@ -43,16 +58,6 @@ Open `http://localhost:8080/?v=1.4.4`, click **Add pod**, select a tracker.
 Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 [`docs/ROWPOD_ECOSYSTEM.md`](docs/ROWPOD_ECOSYSTEM.md). Next slices:
 [`docs/ROWPOD_NEXT.md`](docs/ROWPOD_NEXT.md).
-
-## Android app
-
-Preliminary tablet build **1.5.4** (version code 7), package `org.rowpod.app`:
-
-[download/rowpod_1.5.4.apk](download/rowpod_1.5.4.apk)
-
-How to install it and use the six screens: [download/README.md](download/README.md).
-
-Install it on the tablet with “install unknown apps” allowed. The web dashboard above is the other host.
 
 ## Pod identity and host selection
 
