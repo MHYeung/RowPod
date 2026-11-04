@@ -144,7 +144,8 @@ static uint16_t s_epoch_rate_hz;
 #define BATCH_MAX_FRAMES       8 /* retry buffer size; never exceeded */
 #define BATCH_CAPTURE_FRAMES   4 /* ≥224 Hz: 224 / 4 = 56 notifies/s per pod */
 #define BATCH_LOG_FRAMES       2 /* 112 Hz: 112 / 2 = 56 notifies/s per pod */
-#define CONN_ITVL_MAX_FAST    12 /* 15 ms in 1.25 ms units */
+#define CONN_ITVL_MIN_CREW    12 /* 15 ms: do not demand 7.5 ms */
+#define CONN_ITVL_MAX_CREW    24 /* 30 ms: four pods can share one tablet radio */
 #define CONN_UPDATE_MAX_TRIES  3
 
 static struct ble_npl_event s_notify_ev;
@@ -194,8 +195,8 @@ static void request_fast_conn_params(void)
         return;
     }
     const struct ble_gap_upd_params fast = {
-        .itvl_min = 6,  /* 7.5 ms */
-        .itvl_max = CONN_ITVL_MAX_FAST,
+        .itvl_min = CONN_ITVL_MIN_CREW,
+        .itvl_max = CONN_ITVL_MAX_CREW,
         .latency = 0,
         .supervision_timeout = 400,
         .min_ce_len = 6,
@@ -204,7 +205,7 @@ static void request_fast_conn_params(void)
     int rc = ble_gap_update_params(s_conn_handle, &fast);
     if (rc == 0 || rc == BLE_HS_EALREADY) {
         s_conn_update_tries++;
-        ESP_LOGI(TAG, "requested 7.5-15 ms interval try=%u",
+        ESP_LOGI(TAG, "requested 15-30 ms interval try=%u",
                  (unsigned)s_conn_update_tries);
     } else {
         ESP_LOGW(TAG, "connection interval request rc=%d", rc);
@@ -223,7 +224,9 @@ static uint8_t current_batch_limit(void)
      * frame fits any link. Capture packs frames so each pod stays near the
      * 56 notifies/s that four Windows links carried without loss. */
     if (!session_capture_active()) {
-        return 1;
+        /* Two live frames when the MTU can carry them, so a 30 ms interval
+         * still delivers 56 Hz. batch_target() keeps a 23-byte link at 1. */
+        return 2;
     }
     uint16_t rate = sensor_stream_get_rate_hz();
     uint8_t limit = rate >= SENSOR_PROTO_RATE_HIGH_HZ ? BATCH_CAPTURE_FRAMES
@@ -1586,7 +1589,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                      event->conn_update.status, desc.conn_itvl,
                      desc.conn_latency);
             if (event->conn_update.status == 0 &&
-                desc.conn_itvl > CONN_ITVL_MAX_FAST) {
+                desc.conn_itvl > CONN_ITVL_MAX_CREW) {
                 request_fast_conn_params();
             }
         }

@@ -25,7 +25,7 @@ idf.py -p COMx flash monitor
 **Hosted (recommended, GitHub Pro):** after the one-time Pages setup in
 [`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md), open:
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
+`https://mhyeung.github.io/RowPod/?v=1.4.4`
 
 That URL is **RowPod**. IMU lab (plots, HYROX, mag-cal CSV) is
 `…/lab.html?v=16.9`. Actions deploys only `web/ble_plotter/` as the Pages
@@ -43,6 +43,16 @@ Open `http://localhost:8080/?v=1.4.4`, click **Add pod**, select a tracker.
 Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 [`docs/ROWPOD_ECOSYSTEM.md`](docs/ROWPOD_ECOSYSTEM.md). Next slices:
 [`docs/ROWPOD_NEXT.md`](docs/ROWPOD_NEXT.md).
+
+## Android app
+
+Preliminary tablet build **1.5.4** (version code 7), package `org.rowpod.app`:
+
+[download/rowpod_1.5.4.apk](download/rowpod_1.5.4.apk)
+
+How to install it and use the six screens: [download/README.md](download/README.md).
+
+Install it on the tablet with “install unknown apps” allowed. The web dashboard above is the other host.
 
 ## Pod identity and host selection
 
@@ -80,6 +90,24 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 │   └── power/            Three-minute deep-sleep policy (GPIO0 wake)
 └── web/ble_plotter/      Local Web Bluetooth UI
 ```
+
+## Hardware
+
+The enclosure, battery connector, and oar mount are not in this repo. Print files are published on MakerWorld:
+
+- Pod housing: MakerWorld link to be added
+- Battery connector: MakerWorld link to be added
+- Mount for a Concept2 oar: MakerWorld link to be added
+
+Board files, revision RowPod2 V1.0. Order the Gerber zip as a 4-layer board.
+
+- Schematic: [pcb/SCH_rowpod_SCH_2026-11-05.pdf](pcb/SCH_rowpod_SCH_2026-11-05.pdf)
+- Board drawing and bill of materials: [pcb/PCB_rowpod_2026-11-05.pdf](pcb/PCB_rowpod_2026-11-05.pdf)
+- Gerbers: [pcb/rowpod_gerber.zip](pcb/rowpod_gerber.zip)
+- 3D board: [pcb/rowpod_PCB.step](pcb/rowpod_PCB.step)
+- Render: [pcb/rowpod_pcb_render.png](pcb/rowpod_pcb_render.png)
+
+Firmware stays in this repository. The printed parts are not an official Concept2 product.
 
 ## Adding a component
 

@@ -195,7 +195,7 @@ yaw for oar angle. Feather is a **separate** gravity-about-shaft signal.
 - **Phone:** Android Chrome, or a laptop in the launch. **iPhone Safari cannot
   connect.** A PWA install on Android still needs Chrome’s Web Bluetooth.
 - **Hosted UI:** GitHub Pages  
-  `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`  
+  `https://mhyeung.github.io/RowPod/?v=1.4.4`  
   Local: `http://localhost:8080/?v=1.4.4` after
   `python -m http.server 8080` in `web/ble_plotter/`.
 - **Firmware:** flash once with ESP-IDF; most RowPod angle/UI work is

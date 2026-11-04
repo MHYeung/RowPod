@@ -7,7 +7,7 @@ Portrait coach UI for oar-mounted C3-Tracker pods. Chrome/Edge only
 
 GitHub Pages on the private Pro repo (static `web/ble_plotter/` only):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.5.6`
+`https://mhyeung.github.io/RowPod/?v=1.5.6`
 
 Setup: [`docs/DASHBOARD_PAGES.md`](../../docs/DASHBOARD_PAGES.md).
 Coach/athlete map: [`docs/ROWPOD_ECOSYSTEM.md`](../../docs/ROWPOD_ECOSYSTEM.md).

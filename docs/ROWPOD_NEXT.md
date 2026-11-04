@@ -66,7 +66,7 @@ Hardware / schematic context (do not redesign):
 
 Live hosted UI (reference only; implement in the repo):
 
-- `https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
+- `https://mhyeung.github.io/RowPod/?v=1.4.4`
 
 ---
 

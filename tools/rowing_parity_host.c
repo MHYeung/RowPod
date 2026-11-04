@@ -1,5 +1,6 @@
-/* Host replay of sample_capture CSV through rowing_metrics.
+/* Host replay of a motion CSV through rowing_metrics.
  * Build: gcc -DROWPOD_HOST -O2 -o rowing_parity_host tools/rowing_parity_host.c components/rowing_metrics/rowing_metrics.c -lm
+ * Usage: rowing_parity_host path/to/capture.csv
  */
 #include "rowing_metrics.h"
 
@@ -35,7 +36,11 @@ static const char *field(char *line, int want, char *buf, size_t buflen)
 
 int main(int argc, char **argv)
 {
-    const char *path = argc > 1 ? argv[1] : "sample_capture/test1.csv";
+    if (argc < 2) {
+        fprintf(stderr, "usage: %s path/to/capture.csv\n", argv[0]);
+        return 1;
+    }
+    const char *path = argv[1];
     FILE *f = fopen(path, "r");
     if (!f) {
         perror(path);

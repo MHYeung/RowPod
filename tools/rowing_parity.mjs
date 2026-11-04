@@ -1,8 +1,14 @@
-/** Replay a capture through the browser tracker. Prints the same F lines as rowing_parity_host. */
+/** Replay a capture CSV through the browser tracker. Prints the same F lines as rowing_parity_host.
+ * Usage: node tools/rowing_parity.mjs path/to/capture.csv
+ */
 import { readFileSync } from "node:fs";
 import { OarAngleTracker } from "../web/ble_plotter/rowing_angle.js";
 
-const path = process.argv[2] || "sample_capture/test1.csv";
+const path = process.argv[2];
+if (!path) {
+  console.error("usage: node tools/rowing_parity.mjs path/to/capture.csv");
+  process.exit(1);
+}
 const text = readFileSync(path, "utf8");
 const lines = text.split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
 const header = lines[0].split(",");

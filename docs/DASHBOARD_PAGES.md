@@ -8,11 +8,11 @@ static files under `web/ble_plotter/` are deployed; firmware source stays in
 
 RowPod 1.4.4 (portrait oar arc + crew sync) is the site root:
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/?v=1.4.4`
+`https://mhyeung.github.io/RowPod/?v=1.4.4`
 
 IMU lab (plots, orientation, HYROX, session CSV, battery):
 
-`https://mhyeung.github.io/ESP32C3_MotionTracking_Gadget/lab.html?v=16.9`
+`https://mhyeung.github.io/RowPod/lab.html?v=16.9`
 
 Old `rowpod.html` bookmarks redirect to `index.html`. Chrome or Edge.
 Hard-refresh if scripts look stale.
@@ -24,7 +24,7 @@ Hard-refresh if scripts look stale.
 ## One-time setup
 
 1. Open  
-   `https://github.com/MHYeung/ESP32C3_MotionTracking_Gadget/settings/pages`
+   `https://github.com/MHYeung/RowPod/settings/pages`
 2. **Build and deployment → Source:** **GitHub Actions**
 3. Save (no `DASHBOARD_DEPLOY_TOKEN` needed)
 4. Push this workflow (or **Actions → Deploy dashboard → Run workflow**)

@@ -17,7 +17,7 @@ const DEFAULT_OMEGA_PEAK = 25;
 const DC_ALPHA = 0.2;
 const DC_TAU_S = 0.45;
 const GRAVITY_TRIM_TAU_S = 2;
-const BIAS_CLAMP_DPS = 5;
+const BIAS_CLAMP_DPS = 40;
 const MIN_ARC_DEG = 20;
 const FINISH_TIMEOUT_MS = 2500;
 const FEATHER_ON_DEG = 45;
@@ -150,6 +150,7 @@ export class OarAngleTracker {
     this._stillSec = 0;
     this._stillSum = 0;
     this._stillN = 0;
+    this._parked = false;
     this._recentArcs = [];
     this._prevLockedCatchT = null;
     this._driveSq = 0;
@@ -231,6 +232,15 @@ export class OarAngleTracker {
     this._resetFilters();
   }
 
+  /** Hold the previous rate across a dropped burst, then one 56 Hz step. */
+  _shaftStep(dtSec, omega) {
+    const nominal = 1 / 56;
+    const maxHold = 0.4;
+    if (dtSec <= 1e-4 || dtSec >= maxHold) return 0;
+    if (dtSec <= nominal * 1.5) return omega * dtSec;
+    return this.lastOmega * (dtSec - nominal) + omega * nominal;
+  }
+
   /** Drop in-progress catch/finish without touching Zero or the DC lock. */
   clearStrokeState() {
     this.events = [];
@@ -259,7 +269,7 @@ export class OarAngleTracker {
     }
 
     const dtSec = this.prevT != null ? (t - this.prevT) / 1000 : 0;
-    const dtOk = dtSec > 1e-4 && dtSec < 0.15;
+    const dtOk = dtSec > 1e-4 && dtSec < 0.05;
     const eng = frame.eng || {};
     this._updateGravity(eng, dtSec, dtOk);
 
@@ -269,7 +279,7 @@ export class OarAngleTracker {
       const omegaVertRaw = this._verticalRate(eng);
       this._noteStillBias(eng, dtSec, dtOk, omegaVertRaw);
       omegaVert = omegaVertRaw - this._omegaBias;
-      if (dtOk) this._raw += omegaVert * dtSec;
+      if (!this._parked) this._raw += this._shaftStep(dtSec, omegaVert);
     } else if (frame.quat) {
       this._source = "yaw";
       const yaw = yawAboutGravityDeg(frame.quat);
@@ -288,7 +298,7 @@ export class OarAngleTracker {
       const omegaVertRaw = this._verticalRate(eng);
       this._noteStillBias(eng, dtSec, dtOk, omegaVertRaw);
       omegaVert = omegaVertRaw - this._omegaBias;
-      if (dtOk) this._raw += omegaVert * dtSec;
+      if (!this._parked) this._raw += this._shaftStep(dtSec, omegaVert);
     }
 
     if (dtOk && omegaVert > 0) {
@@ -407,23 +417,29 @@ export class OarAngleTracker {
 
   _noteStillBias(eng, dtSec, dtOk, omegaVertRaw) {
     if (!dtOk) return;
-    const gmag = hypot3(eng.gx || 0, eng.gy || 0, eng.gz || 0);
     const an = hypot3(
       Number.isFinite(eng.ax) ? eng.ax : 0,
       Number.isFinite(eng.ay) ? eng.ay : 0,
       Number.isFinite(eng.az) ? eng.az : 1
     );
-    if (gmag < 3 && Math.abs(an - 1) < 0.1) {
+    const accelStill = Math.abs(an - 1) < 0.12;
+    const mean = this._stillN > 0 ? this._stillSum / this._stillN : omegaVertRaw;
+    const steady =
+      Math.abs(omegaVertRaw) < 50 &&
+      (this._stillN === 0 || Math.abs(omegaVertRaw - mean) < 6);
+    if (accelStill && steady) {
       this._stillSec += dtSec;
       this._stillSum += omegaVertRaw;
       this._stillN += 1;
       if (this._stillSec >= 0.5 && this._stillN > 0) {
         this._omegaBias = this._clampBias(this._stillSum / this._stillN);
+        this._parked = true;
       }
     } else {
       this._stillSec = 0;
       this._stillSum = 0;
       this._stillN = 0;
+      this._parked = false;
     }
   }
 
