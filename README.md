@@ -115,8 +115,8 @@ Board files, revision RowPod2 V1.0. Order the Gerber zip as a 4-layer board.
 - Gerbers: [pcb/rowpod_gerber.zip](pcb/rowpod_gerber.zip)
 - 3D board: [pcb/rowpod_PCB.step](pcb/rowpod_PCB.step)
 - Render: [pcb/rowpod_pcb_render.png](pcb/rowpod_pcb_render.png)
-- LCSC order: [pcb/rowpod_v2_lcsc_bom.xlsx](pcb/rowpod_v2_lcsc_bom.xlsx)
-- Assembly guide: [pcb/RowPod_v2_assembly_guide.pdf](pcb/RowPod_v2_assembly_guide.pdf)
+- LCSC order: [pcb/rowpod_bom.xlsx](pcb/rowpod_bom.xlsx)
+- Assembly guide: [pcb/RowPod_assembly_guide.pdf](pcb/RowPod_assembly_guide.pdf)
 
 Firmware stays in this repository. The printed parts are not an official Concept2 product.
 
