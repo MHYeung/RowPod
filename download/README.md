@@ -57,10 +57,10 @@ The app is landscape. A rail on the left switches pages. On a narrow tablet the 
 flowchart TB
   subgraph record [Record]
     fan[Fan from catch to finish]
-    graph[Graph or table]
+    plot[Graph or table]
     cards[One card per pod]
   end
-  fan --> graph --> cards
+  fan --> plot --> cards
 ```
 
 **Record** is the towpath page. With a pod connected and sitting still, the fan needle rests near zero and the card shows a small angle.

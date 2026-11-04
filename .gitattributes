@@ -6,3 +6,4 @@
 *.step binary
 *.stp binary
 *.zip binary
+*.bin binary

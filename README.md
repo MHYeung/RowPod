@@ -21,30 +21,34 @@ A pod is a board, a lithium-polymer cell, and a printed shell. The cell sits on 
 
 The enclosure, the battery connector, and the oar clamp are print files on MakerWorld, linked under Hardware. They are not an official Concept2 product.
 
-## Requirements
+## Flash a pod
 
-- ESP-IDF **6.0.1** (or compatible 6.x)
-- Target chip: **esp32c3**
-- Chrome or Edge for the Web Bluetooth plotter (HTTPS or `localhost`)
+The try-out image is one file, [firmware/rowpod.bin](firmware/rowpod.bin). It already contains the bootloader, the partition table, and the app. The chip is an ESP32-C3. You do not need ESP-IDF for this.
 
-## Build & flash
+Use Espressif's [Flash Download Tool](https://docs.espressif.com/projects/esp-test-tools/en/latest/esp32c3/production_stage/tools/flash_download_tool.html) on Windows. The installer is on the [Espressif download page](https://www.espressif.com/en/support/download/other-tools).
+
+1. Open the tool and choose chip type **ESP32-C3**.
+2. Add one row: `rowpod.bin` at address **0x0**.
+3. Set SPI mode to **DIO** and SPI speed to **80 MHz**. Tick **DoNotChgBin**. This image was built with a 2 MB flash map. The C3FH4 part is 4 MB, and the program lives in the first 2 MB.
+4. Plug in USB-C, select that COM port, and set the baud to **460800**.
+5. Hold **B**, tap **RST**, release **B**, then click **START**. **B** is the boot button. **RST** resets the chip. **SW1** is the user button and does not enter the flash mode.
+6. After the tool reports success, hold **SW1** for about 2 seconds. The blue LED breathes, and the pod advertises as `C3-T-` plus four characters.
+
+On macOS or Linux, the same file flashes with esptool:
 
 ```sh
-idf.py set-target esp32c3
-idf.py build
-idf.py -p COMx flash monitor
+python -m esptool --chip esp32c3 -b 460800 write-flash 0x0 firmware/rowpod.bin
 ```
+
+If no serial port appears, hold **B**, tap **RST**, and release **B** before the command.
 
 ## Web dashboard
 
-**Hosted (recommended, GitHub Pro):** after the one-time Pages setup in
-[`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md), open:
+Hosted coach UI **1.5.6**, Chrome or Edge:
 
-`https://mhyeung.github.io/RowPod/?v=1.4.4`
+`https://mhyeung.github.io/RowPod/?v=1.5.6`
 
-That URL is **RowPod**. IMU lab (plots, HYROX, mag-cal CSV) is
-`…/lab.html?v=16.9`. Actions deploys only `web/ble_plotter/` as the Pages
-site; firmware stays on `main`. The site URL is still publicly reachable.
+IMU lab (plots, HYROX, mag-cal CSV) is [`lab.html?v=16.13`](https://mhyeung.github.io/RowPod/lab.html?v=16.13). Actions publishes only `web/ble_plotter/`. The firmware is not part of that site. One-time Pages setup: [`docs/DASHBOARD_PAGES.md`](docs/DASHBOARD_PAGES.md).
 
 **Local fallback:**
 
@@ -53,7 +57,7 @@ cd web/ble_plotter
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080/?v=1.4.4`, click **Add pod**, select a tracker.
+Open `http://localhost:8080/?v=1.5.6`, click **Add pod**, select a tracker. Lab: `http://localhost:8080/lab.html?v=16.13`.
 
 Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 [`docs/ROWPOD_ECOSYSTEM.md`](docs/ROWPOD_ECOSYSTEM.md). Next slices:
@@ -111,8 +115,22 @@ Board files, revision RowPod2 V1.0. Order the Gerber zip as a 4-layer board.
 - Gerbers: [pcb/rowpod_gerber.zip](pcb/rowpod_gerber.zip)
 - 3D board: [pcb/rowpod_PCB.step](pcb/rowpod_PCB.step)
 - Render: [pcb/rowpod_pcb_render.png](pcb/rowpod_pcb_render.png)
+- LCSC order: [pcb/rowpod_v2_lcsc_bom.xlsx](pcb/rowpod_v2_lcsc_bom.xlsx)
+- Assembly guide: [pcb/RowPod_v2_assembly_guide.pdf](pcb/RowPod_v2_assembly_guide.pdf)
 
 Firmware stays in this repository. The printed parts are not an official Concept2 product.
+
+## Build with ESP-IDF
+
+[firmware/rowpod.bin](firmware/rowpod.bin) is already built. To compile it yourself, install ESP-IDF **6.0.1** and set the target to **esp32c3**.
+
+```sh
+idf.py set-target esp32c3
+idf.py build
+idf.py -p COMx flash monitor
+```
+
+The console is the USB Serial/JTAG port on the same USB-C socket. If that port does not appear, hold **B**, tap **RST**, and release **B**.
 
 ## Adding a component
 
