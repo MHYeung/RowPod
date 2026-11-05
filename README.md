@@ -1,8 +1,30 @@
 # RowPod
 
+Oar-mounted telemetry for rowing crews. Four pods, one screen: the tablet draws every connected oar from catch to finish.
+
 <img src="download/images/thumbnail.png" alt="Fulcrum RowPod. The pod sits in a printed oar clamp with the blue LED lit." width="480">
 
-RowPod is a set of oar-mounted pods and a tablet page for the crew. Each pod measures oar angle with an **ESP32-C3FH4** and a QMI8658A, and sends it over Bluetooth. The tablet draws every connected oar from catch to finish. RowPod v2 has no magnetometer.
+Each pod is a 4-layer board with an **ESP32-C3FH4** and a QMI8658A. It measures oar angle and sends it over Bluetooth. RowPod v2 has no magnetometer. The same pods talk to two hosts: the Android tablet app, and the browser dashboard.
+
+## What the pod is built to do
+
+These figures are the firmware and host limits. Protractor error, hours on the cell, and radio range in metres have a written method and no filled-in result. Procedures: [`docs/test_protocols/`](docs/test_protocols/). Crew timing math: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md).
+
+| Limit | Figure |
+|---|---|
+| Live sample rate | 56 Hz on the rowing profile, so several pods can share one radio |
+| Other sample rates | 112 Hz, 224 Hz, and 448 Hz. 448 Hz is the one-pod lab capture |
+| Pods on one host | 2–4. Each pod accepts one Bluetooth central. An eight does not fit on one phone |
+| Connection interval | The pod requests 15–30 ms while motion notifications are on |
+| Catch-event interpolation | About 1–3 ms. Error budget for a linear zero-crossing between 56 Hz samples |
+| Software clock | About 5–10 ms after a few fits. Error budget. This term dominates crew timing |
+| Two pods on one stick | Host test allowance: catch times within 15 ms |
+| IMU full scale | ±16 g and ±2048 °/s |
+| Sleep | 3 minutes with no Bluetooth link, then deep sleep. A 2-second button hold wakes the pod |
+| Cell | 400 mAh, 403030 |
+| Radio range | Not measured |
+
+Catch spread in milliseconds is the crew number this build is meant to show. Absolute degrees need the protractor check and a Zero in [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md).
 
 The Record page is the one used on the water. This piece has four pods. The fan is the live angle, the graph is the last few seconds, and catch spread is how far apart the catches are.
 
@@ -19,7 +41,7 @@ A pod is a board, a lithium-polymer cell, and a printed shell. The cell sits on 
 <img src="download/images/IMG_3364.jpg" alt="Parts of a pod: lithium cell, board, and the two halves of the white shell." width="440">
 <img src="download/images/IMG_3363.jpg" alt="Board on the cell with the blue LED lit, next to the open shell." width="260">
 
-The shell and the oar clamp are printed from [MakerWorld](https://makerworld.com/en/models/3547180-rowpod-open-source-oar-sensor#profileId-4057732). They are not an official Concept2 product.
+The housing and the oar clamp are printed from [MakerWorld](https://makerworld.com/en/models/3547180-rowpod-open-source-oar-sensor#profileId-4057732). That listing is an Exclusive model, so the print files are not in this repo. The mount is not an official Concept2 product.
 
 ## Flash a pod
 
@@ -102,11 +124,9 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
 
 ## Hardware
 
-The printed parts are not in this repo. One MakerWorld model has the two-part pod housing and the Concept2 oar mount:
+The cell is a 400 mAh 403030 LiPo, soldered to the board. It is not a printed part.
 
-[RowPod · Open-Source Oar Sensor](https://makerworld.com/en/models/3547180-rowpod-open-source-oar-sensor#profileId-4057732)
-
-The cell is a 400 mAh 403030 LiPo, soldered to the board. It is not a printed part. The mount is not an official Concept2 product.
+Photographs of the printed shell and the clamp are in `download/images/`. The print files themselves stay on [MakerWorld](https://makerworld.com/en/models/3547180-rowpod-open-source-oar-sensor#profileId-4057732). Sleeve dimensions for the clamp are not written down here. The mount is not an official Concept2 product.
 
 Board files, revision RowPod2 V1.0. Order the Gerber zip as a 4-layer board.
 
@@ -117,8 +137,6 @@ Board files, revision RowPod2 V1.0. Order the Gerber zip as a 4-layer board.
 - Render: [pcb/rowpod_pcb_render.png](pcb/rowpod_pcb_render.png)
 - LCSC order: [pcb/rowpod_bom.xlsx](pcb/rowpod_bom.xlsx)
 - Assembly guide: [pcb/RowPod_assembly_guide.pdf](pcb/RowPod_assembly_guide.pdf)
-
-Firmware stays in this repository. The printed parts are not an official Concept2 product.
 
 ## Build with ESP-IDF
 
@@ -156,3 +174,11 @@ For v16 throughput / drain integrity, see
 [docs/test_protocols/V16_THROUGHPUT_DRAIN_TEST.md](docs/test_protocols/V16_THROUGHPUT_DRAIN_TEST.md).
 
 See [BRINGUP.md](BRINGUP.md) for staged hardware bring-up notes.
+
+## License
+
+The firmware (`main/`, `components/`) and the browser host (`web/`, `tools/`) are under the MIT License. See [LICENSE](LICENSE).
+
+The board files in `pcb/` are not part of that grant.
+
+The printed housing and oar clamp are on MakerWorld under the Standard Digital File License – Community Use, and the listing is in the Exclusive program. That is a separate grant from this repository.

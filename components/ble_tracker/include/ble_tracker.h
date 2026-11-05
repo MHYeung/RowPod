@@ -17,8 +17,8 @@ extern "C" {
  * Live notifies pack up to 8 frames. Capture at ≥224 Hz waits for
  * BLE_GAP_EVENT_NOTIFY_TX before the next batch (2× v16 or 4× fused) so a
  * dropped packet is a small hole instead of an 8-sample hole.
- * The stack also re-requests a 7.5–15 ms connection interval on connect,
- * PREPARE, and whenever the host settles slower than 15 ms.
+ * The stack also re-requests a 15–30 ms connection interval on connect,
+ * PREPARE, and whenever the host settles slower than 30 ms.
  */
 esp_err_t ble_tracker_init(void);
 
