@@ -7,6 +7,17 @@ Angle timing, arc, blade metres, and gated feather-on are unchanged.
 Do not flash firmware for this minor. Next named slice is **1.6 Feather +
 blade flags**, only when the human names it.
 
+**Tablet (shipped, not host major 2):** Android APK **1.5.4** is
+[`download/rowpod_1.5.4.apk`](../download/rowpod_1.5.4.apk). Operator notes:
+[`download/README.md`](../download/README.md). It is a separate host from the
+PWA. iPhone is still out of scope. The ingested prompt below still says “do
+not build a native app as part of 1.4–1.6”; that APK is an owner publish, not
+a 1.6 slice.
+
+**Radio on current firmware:** motion links request **15–30 ms** (not 7.5–15)
+and live-batch 2 frames when the ATT payload fits, so four pods still run
+56 Hz. Coach-only `…1005` links are left slow.
+
 ## Human gate (this repo)
 
 | Gate | Status |

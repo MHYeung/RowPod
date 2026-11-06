@@ -14,11 +14,13 @@ extern "C" {
  * Call after device_config_init(), ui_init(), and sensor_stream_init().
  * Streaming starts when a client subscribes to the motion data characteristic.
  *
- * Live notifies pack up to 8 frames. Capture at ≥224 Hz waits for
- * BLE_GAP_EVENT_NOTIFY_TX before the next batch (2× v16 or 4× fused) so a
- * dropped packet is a small hole instead of an 8-sample hole.
- * The stack also re-requests a 15–30 ms connection interval on connect,
- * PREPARE, and whenever the host settles slower than 30 ms.
+ * Live notifies pack 2 frames when the ATT payload can carry them (1 frame
+ * on a 23-byte link), so a 15–30 ms interval still delivers 56 Hz.
+ * Capture at ≥224 Hz waits for BLE_GAP_EVENT_NOTIFY_TX before the next
+ * batch (2× v16 or 4× fused) so a dropped packet is a small hole instead
+ * of an 8-sample hole.
+ * Motion subscribe, PREPARE, and a settled interval slower than 30 ms
+ * re-request 15–30 ms. Coach-only summary links are left slow.
  */
 esp_err_t ble_tracker_init(void);
 

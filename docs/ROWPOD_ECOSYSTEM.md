@@ -1,7 +1,9 @@
 # RowPod ecosystem — coaches, athletes, and how we are building it
 
-**Status:** RowPod host **1.4.4** (17 September 2026).  Pages root is RowPod; IMU lab is `lab.html`.  
-**Hardware:** C3-Tracker pod v2 (ESP32-C3FH4, QMI8658A IMU, no magnetometer).  
+**Status:** RowPod PWA feature map below is written against host **1.4.4**
+(17 September 2026). Pages root is RowPod; IMU lab is `lab.html`.
+An Android tablet APK **1.5.4** is in [`download/`](../download/).
+**Hardware:** C3-Tracker pod v2 (ESP32-C3FH4, QMI8658A IMU, no magnetometer).
 **This document** is the product-level map: what the whole stack does for a
 rowing coach or athlete, what is trustworthy today, and how development is
 actually proceeding. Protocol and accuracy detail lives in
@@ -15,29 +17,36 @@ until the bench checks in that file are done on your own pods.
 ## 1. What this ecosystem is
 
 One **wearable IMU pod** per instrumented oar, talking over **Bluetooth Low
-Energy** to a **browser** (no native iOS/Android app). The same firmware also
-feeds a lab dashboard used for bring-up, HYROX-style training experiments, and
-raw CSV capture. Rowing coaches live in the portrait **RowPod** page.
+Energy** to a **browser** or to the **Android tablet app**. The same firmware
+also feeds a lab dashboard used for bring-up, HYROX-style training experiments,
+and raw CSV capture. There is no iPhone build (Safari has no Web Bluetooth).
 
 ```
-Oar shaft  →  C3-Tracker pod  →  BLE (56 Hz live)  →  Chrome / Edge
-                                                    ├─ RowPod PWA     (towpath)
-                                                    └─ Lab dashboard  (debug / HYROX)
+Oar shaft  →  C3-Tracker pod  →  BLE (56 Hz live)
+                                 ├─ RowPod PWA (portrait, Chrome / Edge)
+                                 ├─ Android tablet APK 1.5.4 (landscape)
+                                 └─ Lab dashboard (debug / HYROX)
               same pod       →  BLE (one summary per stroke) → ESP32-S3 speed coach
 ```
 
-The speed coach is a second central, not a second phone. The pod still accepts only one connection, so the coach and the browser cannot be attached at the same time. The coach subscribes to `…1005` and does not take the raw 56 Hz stream. See the speed-coach `docs/ble_sensors.md` for the 20-byte layout.
+The pod accepts only one central. The speed coach, the tablet, and the
+browser cannot share a pod at the same time. The coach subscribes to `…1005`
+and does not take the raw 56 Hz stream. See the speed-coach
+`docs/ble_sensors.md` for the 20-byte layout. Tablet screens and install:
+[`download/README.md`](../download/README.md). The APK and the PWA are
+versioned separately; a later PWA patch is not in the 1.5.4 APK.
 
 | Piece | Role for rowing |
 |--------|------------------|
-| Pod firmware | Samples IMU on a native clock, advertises as `C3-T-XXXX`, streams raw gyro (v16) or fused attitude, battery, and a software sync handshake. Also notifies one coach summary per stroke on `…1005`. |
+| Pod firmware | Samples IMU on a native clock, advertises as `C3-T-XXXX`, streams raw gyro (v16) or fused attitude, battery, and a software sync handshake. Also notifies one coach summary per stroke on `…1005`. Motion links request **15–30 ms** and live-batch 2 frames when the ATT payload fits. |
 | Rowing profile (`PROFILE_ROWING = 2`) | Host tag: keep **56 Hz** so several pods can share the radio. Not the 448 Hz HYROX capture policy. |
 | RowPod PWA (`index.html`) | Catch/finish angles, crew overlay, in-sync %, stroke CSV. |
+| Android tablet (`download/rowpod_1.5.4.apk`) | Landscape Record / Boat / Activities. Same firmware. See [`download/README.md`](../download/README.md). |
 | IMU lab (`lab.html`) | Fleet health, raw plots, orientation cube, HYROX, session CSV, battery tests. |
 
-**Not in this product yet:** on-pod flash logging of strokes, an iPhone Safari
-client (no Web Bluetooth), eight concurrent GATT links on one phone, or a
-claimed replacement for a seat-box / NK / Peach system.
+**Not in this product yet:** on-pod flash logging of strokes, an iPhone
+client, eight concurrent GATT links on one phone, or a claimed replacement
+for a seat-box / NK / Peach system.
 
 ---
 
@@ -198,9 +207,10 @@ yaw for oar angle. Feather is a **separate** gravity-about-shaft signal.
   `https://mhyeung.github.io/RowPod/?v=1.4.4`  
   Local: `http://localhost:8080/?v=1.4.4` after
   `python -m http.server 8080` in `web/ble_plotter/`.
-- **Firmware:** flash once with ESP-IDF; most RowPod angle/UI work is
-  **host-only** (hard-refresh the page). Profile 2 and 32-bit sync seq need a
-  recent firmware image.
+- **Firmware:** try-out image [`firmware/rowpod.bin`](../firmware/rowpod.bin)
+  (no ESP-IDF). To rebuild: ESP-IDF **6.0.1**, target `esp32c3`. Most RowPod
+  angle/UI work is **host-only** (hard-refresh the PWA, or reinstall the APK).
+  Profile 2 and 32-bit sync seq need a recent firmware image.
 
 Suggested first crews: 2− / 2x on the water, then a four, then sampled seats in
 an eight. Do not start with eight pods.
@@ -406,7 +416,8 @@ project owner.
 | [`DASHBOARD_PAGES.md`](DASHBOARD_PAGES.md) | Hosting the UI on GitHub Pages. |
 | [`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md) | BLE versions, capture lifecycle, sample index. |
 | [`HYROX_TRAINING.md`](HYROX_TRAINING.md) | Body-worn training on the same pod. |
-| [`../README.md`](../README.md) | Build/flash, repo layout. |
+| [`../README.md`](../README.md) | Build/flash, repo layout, PCB and MakerWorld. |
+| [`../download/README.md`](../download/README.md) | Android tablet APK 1.5.4: install, six screens, Zero. |
 | [`../web/ble_plotter/README.md`](../web/ble_plotter/README.md) | RowPod serve URL; IMU lab is `lab.html`. |
 
 Firmware: ESP-IDF 6.x, target `esp32c3`, `idf.py build flash monitor`.

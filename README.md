@@ -15,7 +15,8 @@ These figures are the firmware and host limits. Protractor error, hours on the c
 | Live sample rate | 56 Hz on the rowing profile, so several pods can share one radio |
 | Other sample rates | 112 Hz, 224 Hz, and 448 Hz. 448 Hz is the one-pod lab capture |
 | Pods on one host | 2–4. Each pod accepts one Bluetooth central. An eight does not fit on one phone |
-| Connection interval | The pod requests 15–30 ms while motion notifications are on |
+| Connection interval | The pod requests 15–30 ms while motion notifications are on. Coach-only `…1005` links stay slow |
+| Live notify batch | 2 v16 frames when the ATT payload fits (1 on MTU 23), so 56 Hz still arrives at 30 ms |
 | Catch-event interpolation | About 1–3 ms. Error budget for a linear zero-crossing between 56 Hz samples |
 | Software clock | About 5–10 ms after a few fits. Error budget. This term dominates crew timing |
 | Two pods on one stick | Host test allowance: catch times within 15 ms |
