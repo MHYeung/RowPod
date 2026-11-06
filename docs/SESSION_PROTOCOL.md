@@ -36,10 +36,17 @@ new clock.
 - `9b7e200c-…` — coach control write: zero / set side / clear. The phone app does not use it
 - When more than one motion CCCD is enabled, firmware prefers fused, then v16,
   then v1, so radio load is not doubled
-- Live sends one frame per notify. A capture sends only full batches: 2 frames
+- Live packs **2 frames** per notify when `(ATT_MTU − 3) / frame_len ≥ 2`, else
+  1. A 23-byte ATT payload stays at 1 frame. Two 22-byte v16 frames need
+  MTU ≥ 47. That batch is how 56 Hz still arrives on a **15–30 ms** interval
+  (four pods on one tablet). Capture still sends only full batches: 2 frames
   at 112 Hz and 4 at ≥224 Hz, so each pod stays near 56 notifies/s (112/s at
   448 Hz). `DRAIN` flushes the last partial batch. The batch never exceeds
   `(ATT_MTU − 3) / frame_len`, and it waits for `NOTIFY_TX` between batches
+- Motion subscribe, `PREPARE`, and a settled interval slower than 30 ms request
+  15–30 ms. The request is skipped when no motion CCCD is on, so a coach-only
+  `…1005` link is left slow and does not drain the cell. Connect itself calls
+  the helper before subscribe; that call is a no-op until a motion CCCD is on
 
 ### Configuration
 

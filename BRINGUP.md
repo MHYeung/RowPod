@@ -3,6 +3,12 @@
 Firmware is modular under `components/`. Prefer one concern per image while
 debugging hardware; the production app wires UI + sensors + BLE together.
 
+A combined try-out image is [`firmware/rowpod.bin`](firmware/rowpod.bin)
+(bootloader + partition table + app at 0x0). Flash without ESP-IDF:
+[`README.md`](README.md). Board photographs:
+[`pcb/RowPod_assembly_guide.pdf`](pcb/RowPod_assembly_guide.pdf). The printed
+shell and oar clamp live on MakerWorld; they are not in this repo.
+
 ## Hardware safety before power
 
 1. Inspect the board for solder bridges and confirm battery polarity.

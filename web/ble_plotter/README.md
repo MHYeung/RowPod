@@ -93,5 +93,12 @@ That page is not the towpath UI. Do not fold HYROX or mag-cal into RowPod.
 ## Limits
 
 - One browser gesture per newly permitted pod.
-- Practical target: 2–4 pods at 56 Hz live.
+- Practical target: 2–4 pods at 56 Hz live. Firmware requests a **15–30 ms**
+  connection interval on a motion link so four pods can share one tablet
+  radio. Coach-only `…1005` links skip that request.
+- Live motion notifies pack **2 frames** when the ATT payload allows (1 on a
+  23-byte link), so 56 Hz still arrives at a 30 ms interval. Two v16 frames
+  need MTU ≥ 47.
 - ATT MTU must be ≥25 to carry a single 22-byte v16 frame.
+- A still pod for ~0.5 s **parks** the host integrator (needle holds). That
+  is not a dropped link. Bias clamp is ±40 deg/s. See `docs/ROWING_SYNC.md`.

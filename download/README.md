@@ -95,3 +95,11 @@ The percentage is estimated from pack voltage, not from a fuel gauge. It can fal
 - No iPhone build.
 - No lab plots, HYROX, or magnetometer calibration. Those stay on the web IMU lab.
 - In sync is not a power or pace figure. Arc is the angle swept on the drive, not distance through the water.
+
+## Other hosts
+
+The browser PWA and IMU lab are in [`../web/ble_plotter/`](../web/ble_plotter/)
+and are versioned in `version.js`, independently of this APK. They share the
+same pod firmware and GATT services, not this binary. Flash a pod with
+[`../firmware/rowpod.bin`](../firmware/rowpod.bin) if it is not already
+running. Motion links request 15–30 ms so four pods can share one tablet.

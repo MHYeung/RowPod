@@ -80,9 +80,11 @@ Clock ±rms is a separate confidence for *timing*, not angle.
 
 ## Clocking the crew
 
-BLE notify arrival time is batched (up to 8 frames share one `performance.now`)
-and jittered by the connection interval. Adding the old `offsetMs` converted
-host time *into each pod's device clock*, which pushed seats apart.
+BLE notify arrival time is batched (live: 2 v16 frames when the ATT payload
+fits, else 1; capture: 2 at 112 Hz or 4 at ≥224 Hz) and jittered by the
+**15–30 ms** interval the pod requests on a motion link. Adding the old
+`offsetMs` converted host time *into each pod's device clock*, which pushed
+seats apart.
 
 Each sync response already latches `(sample_index, device_us)`. The host
 repeats that handshake every 4 s and fits
@@ -127,9 +129,20 @@ Auto-centre puts every seat on the same midpoint. Arc length still shows who
 is short. It cannot tell a catch that is short and a finish that is long
 from an arc that is merely shifted. That split needs a measured Zero.
 
-Re-zero if a pod is remounted. From 1.5.1 the host estimates gyro bias
-(still periods, and stroke-to-stroke walk, clamped to ±5 deg/s) and
-propagates gravity with the gyro instead of a fast accelerometer low-pass.
+Re-zero if a pod is remounted. From 1.5.1 the host estimates gyro bias from
+still periods and from stroke-to-stroke walk, then propagates gravity with
+the gyro instead of a fast accelerometer low-pass. The clamp is **±40 deg/s**
+(`BIAS_CLAMP_DPS` in `rowing_angle.js`). After about 0.5 s still (accel near
+1 g, |ω_vert| < 50 deg/s, and ω_vert within 6 deg/s of the still mean) the
+tracker **parks**: it holds the last angle and does not integrate. A drive
+unparks it. A dropped burst between ~27 ms and 0.4 s is filled with the
+previous rate, then one 56 Hz step of the new sample (`_shaftStep`). Gaps
+≥ 0.4 s add nothing. Gravity and DC updates (`dtOk`) need dt < 50 ms.
+
+On the PWA, a frozen needle on the dock is often park, not a dropped link —
+check rate and gaps on the pod card. On-pod `rowing_metrics` has **no** bias
+or park path; only `web/ble_plotter/rowing_angle.js` does.
+
 The midpoint lock is gentler (20% of the error per drive) so a real change
 in where the arc sits is not pulled back on the next stroke.
 
@@ -159,11 +172,18 @@ Catch/finish **timing spread** is the trustworthy crew metric. Absolute catch
 ## Phone limits
 
 Android Chrome typically holds **2–4** concurrent GATT connections reliably;
-this repo already targeted that. An eight will not fit on one phone. Instrument
-a pair, a double, a quad, or sampled seats (stroke + 3-seat + bow).
+this repo already targeted that. The tablet APK is built for the same 2–4
+count: firmware asks for 15–30 ms rather than 7.5 ms so four radios can share
+one central. An eight will not fit on one phone. Instrument a pair, a double,
+a quad, or sampled seats (stroke + 3-seat + bow).
 
 Live rate stays **56 Hz** in the rowing profile so the radio can serve several
 pods. Do not turn on the 448 Hz HYROX capture policy for a crew.
+
+The Android tablet build is a **separate** host (`download/rowpod_1.5.4.apk`,
+version code 7). The PWA version lives in `web/ble_plotter/version.js`. They
+share firmware and GATT, not a binary. iPhone Safari still has no Web
+Bluetooth. Setup: [`../download/README.md`](../download/README.md).
 
 ## Bench, then water
 
@@ -214,8 +234,11 @@ the stroke is not rated (single seat, missing finish, or untrusted clock).
 | Path | Role |
 |------|------|
 | `docs/ROWPOD_NEXT.md` | Next host slice 1.6 feather flags (1.5 connect-and-go shipped) |
+| `download/README.md` | Android tablet APK 1.5.4 (landscape Record / Boat) |
 | `web/ble_plotter/index.html` | RowPod PWA (site root) |
 | `web/ble_plotter/lab.html` | IMU lab (plots, HYROX, mag-cal) |
+| `web/ble_plotter/rowing_angle.js` | Host integrator: park, `_shaftStep`, ±40 deg/s bias |
+| `components/ble_tracker` | 15–30 ms motion interval; live batch 2 |
 | `web/ble_plotter/timebase.js` | `sample_index` → host ms |
 | `web/ble_plotter/boat_rig.js` | Boat class, stroke/bow hand, port/starboard |
 | `web/ble_plotter/rowing_fan.js` | 180° overlay geometry |
