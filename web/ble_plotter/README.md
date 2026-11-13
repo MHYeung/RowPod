@@ -36,6 +36,11 @@ Old `/rowpod.html` bookmarks redirect here.
 3. Row. The first stroke centres the fan. Tap **Zero (measured)** only when you need degrees from a squared perpendicular pose.
 4. **Start piece** → row → **Stop** → **Stroke CSV**.
 
+The stroke CSV is `# RowPod per-stroke CSV v1.5` with
+`angle_ref`, `spm` / `spm_avg5`, and the unitless `drive_index` columns.
+Layout and meanings: [`docs/ROWING_SYNC.md`](../../docs/ROWING_SYNC.md)
+(Water / Stroke CSV). That file is not the lab motion CSV.
+
 In-sync % stays empty until two seats have a catch and a finish on a trusted
 clock. iPhone Safari cannot use Web Bluetooth.
 
