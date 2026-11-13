@@ -71,6 +71,11 @@ Open `http://localhost:8080/lab.html?v=16.9` in Chrome/Edge (not `file://`). Har
 - External 4.7 kΩ pull-ups required; do not rely on internal weak pull-ups alone.
 - IMU INT2 (GPIO3) is the DRDY input; verify it is wired and toggles at the
   selected ODR. The ISR only notifies the sensor task; it never performs I²C.
+- Deep-sleep wake is **GPIO0** (SW1), an RTC pad. GPIO10 cannot wake this chip.
+- Keep `CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=y`. Image verify on a
+  GPIO wake eats the rest of the 2 s hold, so `power_boot_gate()` treats it
+  as a short press and sleeps again. Rebuild the try-out image with
+  `idf.py merge-bin` (see README); flash that file at 0x0, not the app `.bin`.
 
 ## Documentation checkpoints
 

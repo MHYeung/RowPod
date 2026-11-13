@@ -150,6 +150,24 @@ idf.py -p COMx flash monitor
 
 The console is the USB Serial/JTAG port on the same USB-C socket. If that port does not appear, hold **B**, tap **RST**, and release **B**.
 
+`idf.py flash` writes the bootloader, partition table, and app at their
+offsets. [`firmware/rowpod.bin`](firmware/rowpod.bin) is those three merged
+at **0x0** so a one-row flash tool still works. After a local build:
+
+```sh
+idf.py merge-bin
+```
+
+IDF prints the combined path under `build/` (commonly `merged-binary.bin`).
+Copy that file to `firmware/rowpod.bin` only if you intend to replace the
+try-out image, then flash it at **0x0** as in [Flash a pod](#flash-a-pod).
+Do not write the app-only `.bin` at 0x0.
+
+Leave `CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=y` in
+`sdkconfig.defaults`. GPIO wake already used part of the 2 s hold in the
+ROM. If the bootloader also verifies the image, `power_boot_gate()` sees a
+released button and the pod goes back to sleep.
+
 ## Adding a component
 
 1. Create `components/<name>/` with `include/`, `<name>.c`, `CMakeLists.txt`.

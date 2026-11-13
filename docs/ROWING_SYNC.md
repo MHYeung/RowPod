@@ -191,23 +191,55 @@ Session checklist (PWA version, Zero, pass/fail table):
 ### 3. Water
 
 Only after (1) and (2): mount on the looms, Zero at perpendicular, start a
-piece on a straight course, export **Stroke CSV**. Columns are long-format
-(one row per seat per stroke) for researchers:
+piece on a straight course, export **Stroke CSV**. This is the PWA
+per-seat-per-stroke file, not the lab motion CSV in
+[`SESSION_PROTOCOL.md`](SESSION_PROTOCOL.md). The first header line is
+`# RowPod per-stroke CSV v1.5`. `# rowpod_version=` is copied from
+`web/ble_plotter/version.js` (currently **1.5.6**). The download name is
+`rowpod_<ver>_strokes_<iso>.csv`. Do not assume the tablet APK writes this
+layout; that source is not in this repo.
 
-`stroke_index, seat, side, hand, pod_id, t_catch_ms, t_finish_ms, t_feather_ms,
-catch_deg, finish_deg, arc_deg, blade_arc_m, feather_catch_deg, feather_finish_deg,
-catch_dt_vs_ref_ms, finish_dt_vs_ref_ms, feather_dt_vs_ref_ms,
-crew_catch_spread_ms, crew_finish_spread_ms, in_sync, match_quality, spm,
-timebase_rms_ms, clock_status`
+Column order is `STROKE_CSV_COLUMNS` in `rowing_crew.js`:
 
-The CSV header also stamps `# rowpod_version=1.4.4`, `# boat_class=`,
-`# stroke_sits=`, `# inboard_m=`, and `# outboard_m=`. `blade_arc_m` is
-outboard × arc (radians); empty when a finish is missing. `t_feather_ms` is
-the first |feather| up-cross through 45° after finish; empty when there is
-no roll, the clock is untrusted, or feather tracks the fan. `side` is
-port/starboard; `hand` is stroke-side or bow-side. `in_sync` is empty when
-the stroke is not rated (single seat, missing finish, or untrusted clock).
-`match_quality` and `clock_status` (`ok` or `UNTRUSTED_TIME`) explain why.
+```
+stroke_index,seat,side,hand,pod_id,t_catch_ms,t_finish_ms,t_feather_ms,
+catch_deg,finish_deg,arc_deg,blade_arc_m,feather_catch_deg,feather_finish_deg,
+catch_dt_vs_ref_ms,finish_dt_vs_ref_ms,feather_dt_vs_ref_ms,
+crew_catch_spread_ms,crew_finish_spread_ms,in_sync,match_quality,spm,
+timebase_rms_ms,clock_status,angle_ref,spm_avg5,drive_ms,recovery_ms,
+drive_ratio,peak_omega_dps,theta_at_peak_deg,tip_speed_mps,drive_index
+```
+
+The header also stamps `# boat_class=`, `# stroke_sits=`, `# inboard_m=`,
+`# outboard_m=`, and `# created_iso=`. `blade_arc_m` is outboard × arc
+(radians); empty when a finish is missing. `t_feather_ms` is the first
+|feather| up-cross through 45° after finish; empty when there is no roll,
+the clock is untrusted, or feather tracks the fan. `side` is
+port/starboard; `hand` is stroke-side or bow-side.
+
+| Column | Meaning |
+|--------|---------|
+| `angle_ref` | `auto` after the first complete stroke centres the fan; `zero` after **Zero (measured)**; `none` until then |
+| `spm` | `60000 /` this reference catch gap. Blank if the gap is under 600 ms or over 6 s |
+| `spm_avg5` | Mean of up to five catch gaps, kept so a piece can be compared with 1.5.0 logs |
+| `drive_ms` | Catch → finish on this seat. Empty with no finish |
+| `recovery_ms` | Previous finish → this catch. Empty on the first stroke |
+| `drive_ratio` | `drive_ms / (drive_ms + recovery_ms)` |
+| `peak_omega_dps` | Signed peak ω (deg/s) on that drive |
+| `theta_at_peak_deg` | Oar angle at that peak |
+| `tip_speed_mps` | `abs(peak_omega_dps) × π/180 × outboard_m`. Kinematic, not boat speed |
+| `drive_index` | `100 × (∫ω² dt) /` the mean of the first ≤10 drives on **this seat**. Unitless. Not watts |
+
+`in_sync` is empty when the stroke is not rated. `clock_status` is `ok` or
+`UNTRUSTED_TIME` (that seat's timebase rms &gt; 15 ms). `match_quality`:
+
+| Value | Why |
+|-------|-----|
+| `ok` | At least two complete seats and a trusted clock |
+| `single_seat` | Fewer than two catches on this matched stroke |
+| `missing_finish` | Two catches, but fewer than two finishes |
+| `untrusted_time` | A complete seat has rms &gt; 15 ms |
+| `wide_spread` | Rated, but catch spread &gt; 200 ms — check the matcher, do not coach it |
 
 ## Files
 
@@ -219,7 +251,8 @@ the stroke is not rated (single seat, missing finish, or untrusted clock).
 | `web/ble_plotter/timebase.js` | `sample_index` → host ms |
 | `web/ble_plotter/boat_rig.js` | Boat class, stroke/bow hand, port/starboard |
 | `web/ble_plotter/rowing_fan.js` | 180° overlay geometry |
-| `web/ble_plotter/rowing_crew.js` | matching, in-sync %, CSV |
+| `web/ble_plotter/rowing_angle.js` | catch/finish, auto-centre, drive index |
+| `web/ble_plotter/rowing_crew.js` | matching, in-sync %, stroke CSV |
 | `web/ble_plotter/rowing_length.js` | drive arc and blade metres from outboard |
 | `web/ble_plotter/version.js` | `ROWPOD_VERSION` |
 | `components/sensor_protocol` | `PROFILE_ROWING = 2` |
