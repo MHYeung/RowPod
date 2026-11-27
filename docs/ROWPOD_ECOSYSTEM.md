@@ -221,7 +221,7 @@ HYROX.
 | **CSV log** | Full motion capture with session lifecycle (prepare / start / drain). |
 | **HYROX tab** | Candidate reps and work/rest on body-worn pods. Station estimates are **not** official timing. |
 | **Battery test** | Endurance characterisation of the pack. |
-| **Button** | Connected: tap pauses/resumes streaming. Sleep: ~2 s hold to wake. |
+| **Button** | Connected: tap pauses/resumes streaming. Sleep: ~2 s hold to wake from deep sleep. A 2 s hold while already awake does not sleep the pod; USB-C to a computer skips the 3-minute idle. |
 | **Rename** | Advertised name in NVS (max 20 chars) so “stroke” vs “C3-T-18262” in the picker. |
 
 Trajectory / room-position reconstruction is a **lab** workflow

@@ -23,6 +23,18 @@ Open **http://localhost:8080/?v=1.5.6** (not `file://`). Hard-refresh if the
 header is not **1.5.6**. Installed PWAs must be deleted and re-added when
 the cache name changes (`rowpod-1.5.6`).
 
+`sw.js` is **cache-first**. The install list `ASSETS` must include every
+RowPod module. Adding a new `rowing_*.js` (or anything `rowpod.js` imports)
+without listing it there leaves an installed PWA on the old graph until the
+cache name changes. Bump together: `version.js`, `index.html?v=`,
+`rowpod.js` `register("./sw.js?v=…")`, and `CACHE` in `sw.js`.
+
+Lab files (`lab.html`, `app.js`, `hyrox.js`, `csv_log.js`, …) are not in
+`ASSETS`; the lab has no service worker. Shared GATT helpers
+(`ble_client.js`, `pod_registry.js`, `protocol.js`, `timebase.js`) are.
+`pod_registry.js` imports `ble_client.js?v=16.13` (lab token). Bumping only
+`ROWPOD_VERSION` does not change that import URL.
+
 Old `/rowpod.html` bookmarks redirect here.
 
 ## Coach flow

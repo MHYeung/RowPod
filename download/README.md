@@ -24,9 +24,10 @@ The blue LED sits in a slot on the corner of the white housing. USB-C is on the 
 - Asleep: LED off, and the pod does not appear in a scan. Hold the button for about 2 seconds until the LED breathes.
 - Awake and advertising: LED breathes, as in the photo.
 - Connected: LED stays dim.
-- A short press while the pod is asleep does nothing. A short press while it is connected pauses or resumes the live stream.
+- A short press while the pod is asleep does nothing (on battery). A short press while it is connected pauses or resumes the live stream.
+- A long press while the pod is already awake does not put it to sleep. Sleep is the idle timer after disconnect, not a gesture.
 
-If nobody connects, the pod goes back to sleep after about 3 minutes.
+If nobody connects, the pod goes back to sleep after about 3 minutes. Unplug USB first: a computer on the USB-C port keeps the pod awake, and a short button press will boot it.
 
 ## One piece
 

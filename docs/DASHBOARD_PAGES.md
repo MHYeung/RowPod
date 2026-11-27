@@ -31,8 +31,25 @@ created it earlier, and remove the old `DASHBOARD_DEPLOY_TOKEN` secret.
 
 ## Trigger a deploy
 
-- Push changes under `web/ble_plotter/`, or
+- Push changes under `web/ble_plotter/` to `main`, or
 - **Actions → Deploy dashboard → Run workflow**
+
+Firmware-only commits do not run this workflow. Pages is only the static
+host under `web/ble_plotter/`.
+
+## RowPod service worker vs IMU lab
+
+`sw.js` is cache-first (`caches.match`, then network). Cache name
+`rowpod-1.5.6` must stay in lockstep with `version.js`, `index.html?v=`, and
+`rowpod.js` `register("./sw.js?v=1.5.6")`. `ASSETS` is the install-time
+file list; a new RowPod module that is missing there stays stale on an
+installed PWA until the cache name changes.
+
+The IMU lab has **no** service worker. Lab cache-bust is the `?v=16.13`
+query on `lab.html` / `styles.css` / `app.js`. Shared files
+(`ble_client.js`, `pod_registry.js`) sit in the RowPod `ASSETS` list, and
+`pod_registry.js` imports `ble_client.js?v=16.13`. Do not mix lab-only
+modules (`hyrox.js`, `csv_log.js`, mag-cal) into `ASSETS`.
 
 ## Troubleshooting
 
@@ -43,6 +60,8 @@ created it earlier, and remove the old `DASHBOARD_DEPLOY_TOKEN` secret.
 | Environment approval wait | Settings → Environments → `github-pages` → remove required reviewers if you added any |
 | Web Bluetooth fails | Must use the `https://…github.io/…` URL (or localhost), not `file://` |
 | Phone still shows an old RowPod header | Hard-refresh; delete the old PWA and re-add. Cache name must be `rowpod-1.5.6` |
+| New RowPod JS file never loads in the installed PWA | Add it to `sw.js` `ASSETS` and bump the cache name with `version.js` |
+| Pages still old after a firmware push | Workflow only runs on `web/ble_plotter/**` (or manual dispatch) |
 
 ## Local fallback
 
