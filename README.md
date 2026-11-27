@@ -93,6 +93,9 @@ Rowing detail: [`docs/ROWING_SYNC.md`](docs/ROWING_SYNC.md) and
   device; no device-side mode switch is required.
 - After three minutes with no BLE link the pod enters deep sleep. Hold GPIO0
   for ~2 s to boot again; a shorter press is ignored and the pod stays asleep.
+  A USB host on the USB-C Serial/JTAG port skips that idle sleep and also lets
+  a short press continue boot — unplug USB before testing the sleep policy.
+  A 2 s hold while awake does not sleep the pod.
 - In a connected pod, single-tap pauses/resumes the BLE sensor stream.
 - Dashboard rename writes the position name into the pod NVS and becomes the
   BLE advertised name (max 20 chars). Motion service UUIDs stay fixed.
